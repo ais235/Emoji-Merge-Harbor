@@ -6,7 +6,6 @@ import {
   isObstacleCellState,
   itemIsGenerator,
   itemIsResourcePickup,
-  cellGeneratorChargesRemaining,
   orderCanDeliverFromGrid,
 } from "../types";
 
@@ -41,7 +40,7 @@ export function hasMergeOrCompletableOrder(grid: GridCell[], orders?: Order[]): 
   return false;
 }
 
-function hasGeneratorSpawnMove(grid: GridCell[], energy: number, generatorMaxCharges: number): boolean {
+function hasGeneratorSpawnMove(grid: GridCell[], energy: number, _generatorMaxCharges: number): boolean {
   if (energy <= 0) return false;
   const hasEmptyNormal = grid.some(
     (c) => !isObstacleCellState(c.cellState) && c.item === null
@@ -52,8 +51,7 @@ function hasGeneratorSpawnMove(grid: GridCell[], energy: number, generatorMaxCha
     const id = grid[i].item;
     if (!id) continue;
     const def = ALL_ITEMS[id];
-    if (def && itemIsGenerator(def) && cellGeneratorChargesRemaining(grid[i], generatorMaxCharges) > 0)
-      return true;
+    if (def && itemIsGenerator(def)) return true;
   }
   return false;
 }

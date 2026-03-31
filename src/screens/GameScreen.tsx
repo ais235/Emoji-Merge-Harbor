@@ -18,7 +18,6 @@ import {
   isObstacleCellState,
   itemIsGenerator,
   itemIsResourcePickup,
-  cellGeneratorChargesRemaining,
   KEY_ITEM_ID,
   orderCanDeliverFromGrid,
   orderRemainingForItem,
@@ -27,7 +26,6 @@ import {
   type ProgressionState,
   type CoinFlyState,
 } from "../types";
-import { getGeneratorMaxCharges } from "../progressionManager";
 import {
   canDeliverReconstructionItem,
   getCurrentReconstructionStage,
@@ -109,7 +107,6 @@ export default function GameScreen({
   onNoMovesExitHome,
   onReconstructionDeliver,
 }: GameScreenProps) {
-  const genMax = getGeneratorMaxCharges(progState.purchasedUpgrades);
   const reconStage = getCurrentReconstructionStage(progState.reconstruction);
   const reconBarActive =
     !isSessionComplete &&
@@ -314,10 +311,8 @@ export default function GameScreen({
               const paidCleanable =
                 (cell.cellState === "dirty_1" || cell.cellState === "dirty_2") && paidCleanMode;
               const isGen = Boolean(item && itemIsGenerator(item));
-              const genCharges = isGen ? cellGeneratorChargesRemaining(cell, genMax) : 0;
               const genNoEnergy = isGen && state.energy <= 0;
-              const genDepleted = isGen && genCharges === 0;
-              const genBlocked = genDepleted || genNoEnergy;
+              const genBlocked = genNoEnergy;
               const isResPickup = Boolean(item && itemIsResourcePickup(item));
               const resIsCoins = Boolean(isResPickup && item && item.grantsCoins > 0);
               const cellClasses = [
@@ -422,26 +417,14 @@ export default function GameScreen({
                     <div className="absolute bottom-0.5 right-0.5 z-10 rounded bg-white/90 px-0.5 text-[6px] font-black text-gray-500 shadow-sm">
                       L{item.level}
                     </div>
-                  ) : isGen ? (
-                    <div
-                      className={`absolute bottom-0.5 right-0.5 z-10 min-w-[0.85rem] rounded border px-0.5 text-center text-[6px] font-black shadow-sm tabular-nums ${
-                        !genBlocked
-                          ? "border-violet-300/80 bg-violet-600 text-white"
-                          : "border-gray-400 bg-gray-600 text-gray-100"
-                      }`}
-                      title={
-                        genDepleted
-                          ? "Заряды кончились"
-                          : genNoEnergy
-                            ? "Нет энергии"
-                            : `Осталось выдач: ${genCharges}`
-                      }
-                    >
-                      {genCharges}
-                    </div>
                   ) : null}
-                  {isGen && !genBlocked ? (
-                    <div className="pointer-events-none absolute left-0.5 top-0.5 z-10 text-[7px] font-black leading-none text-violet-700/90">
+                  {isGen ? (
+                    <div
+                      className={`pointer-events-none absolute bottom-0.5 left-0.5 z-10 text-[8px] font-black leading-none ${
+                        genBlocked ? "text-gray-500/90" : "text-violet-700/90"
+                      }`}
+                      title={genNoEnergy ? "Нет энергии" : "Генератор"}
+                    >
                       ⚡
                     </div>
                   ) : null}

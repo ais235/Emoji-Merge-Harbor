@@ -813,8 +813,6 @@ export default function App() {
           !isObstacleCellState(cell.cellState)
         ) {
           if (state.energy <= 0) return;
-          const remaining = cellGeneratorChargesRemaining(cell, genMax);
-          if (remaining <= 0) return;
 
           const spawnIdx = pickEmptyCellForGeneratorSpawn(
             state.grid,
@@ -838,8 +836,6 @@ export default function App() {
             item: spawnItemId,
             generatorCharges: undefined,
           };
-          const nextCharges = remaining - 1;
-          newGrid[index] = { ...newGrid[index], generatorCharges: nextCharges };
           setState({ ...state, grid: newGrid, energy: state.energy - 1 });
           setLastAction({ type: "spawn", index: spawnIdx });
           sounds.select();
