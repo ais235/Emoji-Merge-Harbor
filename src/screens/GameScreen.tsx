@@ -11,15 +11,29 @@ import {
   Star,
   CheckCircle2,
   HelpCircle,
+  Lock,
 } from "lucide-react";
 import {
   ALL_ITEMS,
   isObstacleCellState,
+  itemIsGenerator,
+  itemIsResourcePickup,
+  cellGeneratorChargesRemaining,
+  KEY_ITEM_ID,
+  orderCanDeliverFromGrid,
+  orderRemainingForItem,
   type CellState,
   type GameState,
   type ProgressionState,
   type CoinFlyState,
 } from "../types";
+import { getGeneratorMaxCharges } from "../progressionManager";
+import {
+  canDeliverReconstructionItem,
+  getCurrentReconstructionStage,
+  isReconstructionFullyComplete,
+  reconstructionOrdersProgress,
+} from "../reconstruction";
 
 function dirtyStageClass(cellState: CellState): "cell-dirty-2" | "cell-dirty-1" | null {
   if (cellState === "dirty_2") return "cell-dirty-2";
@@ -31,15 +45,10 @@ export interface GameScreenProps {
   state: GameState;
   progState: ProgressionState;
   showOrderCoinBonus: boolean;
-  spawnEnergyCost: number;
-  showFreeSpawnLabel?: boolean;
-  /** Бесплатный спавн и кнопка «СОЗДАТЬ» без порога энергии */
   devMode: boolean;
   onToggleDevMode: () => void;
   xpProgressPercent: number;
   onGoHome: () => void;
-  onSpawn: () => void;
-  onFreeSpawnAttempt: () => void;
   onCellClick: (index: number, shiftKey?: boolean) => void;
   onCompleteOrder: (orderId: string) => void;
   onOpenTutorial: () => void;
@@ -47,6 +56,8 @@ export interface GameScreenProps {
   mergePopIndex: number | null;
   /** Краткая подсветка соседних клеток после снятия препятствия */
   cellUnlockedFlashIndices?: number[];
+  /** Подсветка клеток с лутом после очистки dirty_1 → normal */
+  cellDirtyLootFlashIndices?: number[];
   cellShakePair: [number, number] | null;
   coinFly: CoinFlyState | null;
   gridWidth: number;
@@ -62,26 +73,25 @@ export interface GameScreenProps {
   onShuffleGrid: () => void;
   onNoMovesNewSession: () => void;
   onNoMovesExitHome: () => void;
+  /** Сдача предмета в этап «Реконструкция» (если этап требует предметы). */
+  onReconstructionDeliver: () => void;
 }
 
 export default function GameScreen({
   state,
   progState,
   showOrderCoinBonus,
-  spawnEnergyCost,
-  showFreeSpawnLabel = false,
   devMode,
   onToggleDevMode,
   xpProgressPercent,
   onGoHome,
-  onSpawn,
-  onFreeSpawnAttempt,
   onCellClick,
   onCompleteOrder,
   onOpenTutorial,
   selectedCell,
   mergePopIndex,
   cellUnlockedFlashIndices = [],
+  cellDirtyLootFlashIndices = [],
   cellShakePair,
   coinFly,
   gridWidth,
@@ -97,20 +107,21 @@ export default function GameScreen({
   onShuffleGrid,
   onNoMovesNewSession,
   onNoMovesExitHome,
+  onReconstructionDeliver,
 }: GameScreenProps) {
-  const hasEmptyForSpawn = state.grid.some((c) => c.item === null);
-  const canSpawnPaid =
-    devMode || (hasEmptyForSpawn && state.energy >= spawnEnergyCost);
-
-  const createHint = !devMode
-    ? !hasEmptyForSpawn
-      ? "Нет свободной клетки"
-      : state.energy === 0
-        ? "Нет энергии"
-        : state.energy < spawnEnergyCost
-          ? `Нужно ${spawnEnergyCost} энергии`
-          : null
-    : null;
+  const genMax = getGeneratorMaxCharges(progState.purchasedUpgrades);
+  const reconStage = getCurrentReconstructionStage(progState.reconstruction);
+  const reconBarActive =
+    !isSessionComplete &&
+    !isReconstructionFullyComplete(progState.reconstruction) &&
+    reconStage != null;
+  const reconOrderProg =
+    reconStage && reconStage.requirement.type === "orders"
+      ? reconstructionOrdersProgress(progState.reconstruction, reconStage)
+      : null;
+  const reconCanDeliverItem =
+    reconStage?.requirement.type === "items" &&
+    canDeliverReconstructionItem(progState.reconstruction, state.grid);
 
   return (
     <div className="relative h-[100dvh] w-full max-w-[360px] mx-auto bg-[#F8F9FA] flex flex-col items-center p-2 font-sans select-none overflow-hidden">
@@ -122,7 +133,7 @@ export default function GameScreen({
             ? "border-green-700/30 bg-green-500 text-white"
             : "border-gray-300 bg-gray-300 text-gray-700"
         }`}
-        title="Режим разработчика: без траты энергии на спавн"
+        title="Режим разработчика"
         aria-pressed={devMode}
       >
         {devMode ? "DEV: ON" : "DEV: OFF"}
@@ -179,25 +190,70 @@ export default function GameScreen({
         </span>
       </div>
 
+      {reconBarActive ? (
+        <div className="mb-1.5 w-full flex-shrink-0 rounded-lg border border-violet-200 bg-violet-50/95 px-2 py-1.5 shadow-sm">
+          <div className="mb-0.5 text-[8px] font-black uppercase tracking-wide text-violet-800">
+            Реконструкция
+          </div>
+          {reconOrderProg != null ? (
+            <div className="text-[10px] font-bold leading-tight text-violet-950">
+              {reconStage!.title}: заказы {reconOrderProg.current}/{reconOrderProg.target}
+            </div>
+          ) : reconStage!.requirement.type === "items" ? (
+            <div className="flex items-center justify-between gap-2">
+              <span className="min-w-0 text-[10px] font-bold leading-tight text-violet-950">
+                {reconStage!.title}
+              </span>
+              <button
+                type="button"
+                onClick={onReconstructionDeliver}
+                disabled={!reconCanDeliverItem}
+                className={`flex-shrink-0 rounded-md px-2 py-1 text-[8px] font-black uppercase ${
+                  reconCanDeliverItem
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : "cursor-not-allowed bg-gray-200 text-gray-400"
+                }`}
+              >
+                Сдать
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Orders */}
       <div className="no-scrollbar mb-1.5 flex w-full flex-shrink-0 gap-2 overflow-x-auto pb-1">
         {state.orders.map((order) => {
-          const item = ALL_ITEMS[order.requiredItemId];
-          const hasItem = state.grid.some((cell) => cell.item === order.requiredItemId);
+          const canDeliver = orderCanDeliverFromGrid(state.grid, order);
           return (
             <motion.div
               key={order.id}
               layout
-              className={`w-24 flex-shrink-0 rounded-lg border-2 bg-white p-1.5 transition-colors ${hasItem ? "border-green-400 bg-green-50" : "border-gray-100"}`}
+              className={`min-w-[6.75rem] max-w-[8.5rem] flex-shrink-0 rounded-lg border-2 bg-white p-1.5 transition-colors ${canDeliver ? "border-green-400 bg-green-50" : "border-gray-100"}`}
             >
-              <div className="mb-0.5 flex items-start justify-between">
-                <span className="text-lg">{item.emoji}</span>
-                {hasItem && <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />}
+              <div className="mb-1 space-y-0.5">
+                {order.requirements.map((req) => {
+                  const def = ALL_ITEMS[req.itemId];
+                  const rem = orderRemainingForItem(order, req.itemId);
+                  const done = req.count - rem;
+                  const rowDone = rem === 0;
+                  return (
+                    <div
+                      key={req.itemId}
+                      className={`flex items-center gap-0.5 text-[8px] leading-tight ${rowDone ? "text-green-700" : "text-gray-700"}`}
+                    >
+                      <span className="text-sm leading-none" aria-hidden>
+                        {def?.emoji ?? "•"}
+                      </span>
+                      <span className="min-w-0 flex-1 font-mono font-bold tabular-nums">
+                        {req.itemId}: {done}/{req.count}
+                      </span>
+                      {rowDone ? <CheckCircle2 className="h-3 w-3 shrink-0 text-green-500" /> : null}
+                    </div>
+                  );
+                })}
               </div>
-              <div className="mb-0.5 truncate text-[7px] font-bold uppercase text-gray-400">
-                {item.name}
-              </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between border-t border-gray-100 pt-1">
                 <div className="flex items-center gap-0.5">
                   <Coins className="h-2 w-2 text-yellow-600" />
                   <span className="text-[9px] font-bold">{order.rewardCoins}</span>
@@ -214,8 +270,8 @@ export default function GameScreen({
                   <button
                     type="button"
                     onClick={() => onCompleteOrder(order.id)}
-                    disabled={!hasItem}
-                    className={`rounded px-1 py-0.5 text-[7px] font-bold uppercase ${hasItem ? "bg-green-500 text-white shadow-sm" : "cursor-not-allowed bg-gray-100 text-gray-400"}`}
+                    disabled={!canDeliver}
+                    className={`rounded px-1 py-0.5 text-[7px] font-bold uppercase ${canDeliver ? "bg-green-500 text-white shadow-sm" : "cursor-not-allowed bg-gray-100 text-gray-400"}`}
                   >
                     Отдать
                   </button>
@@ -242,21 +298,38 @@ export default function GameScreen({
             {state.grid.map((cell, index) => {
               const itemId = cell.item;
               const item = itemId ? ALL_ITEMS[itemId] : null;
+              const isLocked = cell.cellState === "locked";
               const isObstacle = isObstacleCellState(cell.cellState);
               const dirtyClass = dirtyStageClass(cell.cellState);
               const isSelected = selectedCell === index;
+              const keyUnlockReady =
+                isLocked &&
+                selectedCell !== null &&
+                state.grid[selectedCell]?.item === KEY_ITEM_ID;
               const isShaking =
                 cellShakePair &&
                 (cellShakePair[0] === index || cellShakePair[1] === index);
               const isUnlockFlash = cellUnlockedFlashIndices.includes(index);
-              const paidCleanable = isObstacle && dirtyClass !== null && paidCleanMode;
+              const isDirtyLootPop = cellDirtyLootFlashIndices.includes(index);
+              const paidCleanable =
+                (cell.cellState === "dirty_1" || cell.cellState === "dirty_2") && paidCleanMode;
+              const isGen = Boolean(item && itemIsGenerator(item));
+              const genCharges = isGen ? cellGeneratorChargesRemaining(cell, genMax) : 0;
+              const genNoEnergy = isGen && state.energy <= 0;
+              const genDepleted = isGen && genCharges === 0;
+              const genBlocked = genDepleted || genNoEnergy;
+              const isResPickup = Boolean(item && itemIsResourcePickup(item));
+              const resIsCoins = Boolean(isResPickup && item && item.grantsCoins > 0);
               const cellClasses = [
                 "game-grid-cell relative flex h-full w-full min-h-0 min-w-0 items-center justify-center rounded-md transition-colors duration-200",
-                isObstacle && dirtyClass !== null
-                  ? `${dirtyClass} ${paidCleanable ? "cursor-pointer ring-1 ring-amber-400/60 ring-inset" : "cursor-not-allowed"}`
-                  : `cursor-pointer ${isSelected ? "cell-selected bg-blue-50" : "bg-white/50 hover:bg-white/80"}`,
+                isLocked
+                  ? `cell-locked ${keyUnlockReady ? "cursor-pointer ring-2 ring-amber-400/90 ring-inset" : "cursor-not-allowed"}`
+                  : isObstacle && dirtyClass !== null
+                    ? `${dirtyClass} ${paidCleanable ? "cursor-pointer ring-1 ring-amber-400/60 ring-inset" : "cursor-not-allowed"}`
+                    : `${isGen && genBlocked ? "cursor-not-allowed" : "cursor-pointer"} ${isSelected ? "cell-selected bg-blue-50" : isGen ? (genBlocked ? "cell-is-generator cell-generator-depleted" : "cell-is-generator") : isResPickup ? (resIsCoins ? "cell-resource-coins" : "cell-resource-energy") : "bg-white/50 hover:bg-white/80"}`,
                 mergePopIndex === index ? "cell-merge-pop" : "",
                 isUnlockFlash ? "cell-unlocked" : "",
+                isDirtyLootPop ? "cell-dirty-loot-pop" : "",
                 isShaking ? "cell-shake" : "",
               ]
                 .filter(Boolean)
@@ -265,11 +338,14 @@ export default function GameScreen({
                 <div
                   key={index}
                   role="button"
-                  tabIndex={isObstacle && !paidCleanable ? -1 : 0}
-                  aria-disabled={isObstacle && !paidCleanable}
+                  tabIndex={
+                    isLocked ? (keyUnlockReady ? 0 : -1) : isObstacle && !paidCleanable ? -1 : 0
+                  }
+                  aria-disabled={isLocked ? !keyUnlockReady : isObstacle && !paidCleanable}
                   onClick={(e) => onCellClick(index, e.shiftKey)}
                   onKeyDown={(e) => {
-                    if (isObstacle && !paidCleanable) return;
+                    if (isLocked && !keyUnlockReady) return;
+                    if (!isLocked && isObstacle && !paidCleanable) return;
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       onCellClick(index, e.shiftKey);
@@ -277,6 +353,20 @@ export default function GameScreen({
                   }}
                   className={cellClasses}
                 >
+                  {isLocked ? (
+                    <div
+                      className="pointer-events-none absolute inset-0 z-[1] flex flex-col items-center justify-center gap-0.5 bg-slate-800/25"
+                      aria-hidden
+                    >
+                      <Lock
+                        className="h-7 w-7 text-slate-700 drop-shadow-md sm:h-8 sm:w-8"
+                        strokeWidth={2.25}
+                      />
+                      <span className="text-[6px] font-black uppercase tracking-wider text-slate-800/90">
+                        Замок
+                      </span>
+                    </div>
+                  ) : null}
                   {coinFly?.source === "clean" && coinFly.cellIndex === index ? (
                     <span
                       className="coin-fly pointer-events-none absolute bottom-full left-1/2 z-20 mb-0.5 -translate-x-1/2 whitespace-nowrap"
@@ -290,21 +380,71 @@ export default function GameScreen({
                       {item && (
                         <motion.div
                           key={`${itemId}-${index}`}
-                          initial={{ scale: 0, opacity: 0 }}
-                          animate={{ scale: 1, opacity: 1 }}
+                          initial={{
+                            scale: 0,
+                            opacity: 0,
+                            rotate: isDirtyLootPop ? -14 : 0,
+                          }}
+                          animate={{ scale: 1, opacity: 1, rotate: 0 }}
                           exit={{ scale: 0, opacity: 0 }}
-                          className="pointer-events-none text-2xl sm:text-3xl md:text-4xl"
+                          transition={
+                            isDirtyLootPop
+                              ? { type: "spring", stiffness: 420, damping: 17 }
+                              : { duration: 0.2 }
+                          }
+                          className={`pointer-events-none text-2xl sm:text-3xl md:text-4xl ${
+                            isGen && !genBlocked
+                              ? "drop-shadow-[0_2px_6px_rgba(139,92,246,0.65)]"
+                              : isResPickup
+                                ? resIsCoins
+                                  ? "drop-shadow-[0_2px_10px_rgba(234,179,8,0.55)]"
+                                  : "drop-shadow-[0_2px_10px_rgba(56,189,248,0.55)]"
+                                : ""
+                          }`}
                         >
                           {item.emoji}
                         </motion.div>
                       )}
                     </AnimatePresence>
                   </div>
-                  {item && (
+                  {item && itemIsResourcePickup(item) ? (
+                    <div
+                      className={`absolute bottom-0.5 right-0.5 z-10 rounded border px-0.5 text-[6px] font-black shadow-sm tabular-nums ${
+                        item.grantsCoins > 0
+                          ? "border-amber-300/90 bg-amber-500 text-white"
+                          : "border-sky-400/90 bg-sky-600 text-white"
+                      }`}
+                      title="Нажми, чтобы забрать"
+                    >
+                      {item.grantsCoins > 0 ? `+${item.grantsCoins}` : `+${item.grantsEnergy}`}
+                    </div>
+                  ) : item && !itemIsGenerator(item) && itemId !== KEY_ITEM_ID ? (
                     <div className="absolute bottom-0.5 right-0.5 z-10 rounded bg-white/90 px-0.5 text-[6px] font-black text-gray-500 shadow-sm">
                       L{item.level}
                     </div>
-                  )}
+                  ) : isGen ? (
+                    <div
+                      className={`absolute bottom-0.5 right-0.5 z-10 min-w-[0.85rem] rounded border px-0.5 text-center text-[6px] font-black shadow-sm tabular-nums ${
+                        !genBlocked
+                          ? "border-violet-300/80 bg-violet-600 text-white"
+                          : "border-gray-400 bg-gray-600 text-gray-100"
+                      }`}
+                      title={
+                        genDepleted
+                          ? "Заряды кончились"
+                          : genNoEnergy
+                            ? "Нет энергии"
+                            : `Осталось выдач: ${genCharges}`
+                      }
+                    >
+                      {genCharges}
+                    </div>
+                  ) : null}
+                  {isGen && !genBlocked ? (
+                    <div className="pointer-events-none absolute left-0.5 top-0.5 z-10 text-[7px] font-black leading-none text-violet-700/90">
+                      ⚡
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
@@ -312,43 +452,11 @@ export default function GameScreen({
         </div>
       </div>
 
-      {/* Controls: СОЗДАТЬ + бесплатная попытка + прочее */}
-      <div className="mt-1.5 flex w-full flex-shrink-0 items-start gap-2 px-2">
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.95 }}
-            onClick={onSpawn}
-            disabled={!canSpawnPaid}
-            className={`group relative flex w-full items-center justify-center gap-2 rounded-xl py-3 text-base font-bold shadow-md transition-all ${canSpawnPaid ? "bg-blue-500 text-white shadow-blue-100 active:bg-blue-600" : "cursor-not-allowed bg-gray-200 text-gray-400"}`}
-          >
-            <Zap className="h-5 w-5 flex-shrink-0 fill-current" />
-            <span>СОЗДАТЬ</span>
-            <div className="absolute -top-1.5 -right-1.5 flex items-center gap-0.5 rounded-full border border-white bg-yellow-400 px-1.5 py-0.5 text-[9px] font-black text-yellow-900">
-              <Zap className="h-2 w-2 fill-current" />
-              {spawnEnergyCost}
-            </div>
-          </motion.button>
-          {createHint ? (
-            <p className="text-center text-[10px] font-semibold leading-tight text-gray-600">{createHint}</p>
-          ) : null}
-          <div className="relative">
-            {showFreeSpawnLabel ? (
-              <span
-                className="pointer-events-none absolute -top-1 left-1/2 z-10 w-max -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md bg-emerald-400 px-2 py-0.5 text-[10px] font-black tracking-wide text-emerald-950 shadow"
-                aria-hidden
-              >
-                FREE
-              </span>
-            ) : null}
-            <button
-              type="button"
-              onClick={onFreeSpawnAttempt}
-              className="w-full rounded-xl border-2 border-emerald-500/60 bg-emerald-50 py-2 text-xs font-bold text-emerald-900 transition-colors active:bg-emerald-100"
-            >
-              Попробовать бесплатно
-            </button>
-          </div>
+      <div className="mt-1.5 flex w-full flex-shrink-0 items-center gap-2 px-2">
+        <div className="flex min-h-[44px] min-w-0 flex-1 items-center justify-center rounded-xl border border-violet-200/80 bg-violet-50 px-2 py-2">
+          <p className="text-center text-[10px] font-bold leading-snug text-violet-900">
+            🧺 генератор · 🔑 замок · 🪙/⚡ награда — клик, чтобы забрать
+          </p>
         </div>
 
         <button
@@ -405,6 +513,28 @@ export default function GameScreen({
           border: 2px solid #378ADD;
           box-sizing: border-box;
         }
+        .cell-resource-coins {
+          background: linear-gradient(160deg, rgba(254, 243, 199, 0.95), rgba(251, 191, 36, 0.35));
+          box-shadow: inset 0 0 0 2px rgba(245, 158, 11, 0.45);
+        }
+        .cell-resource-energy {
+          background: linear-gradient(160deg, rgba(224, 242, 254, 0.95), rgba(56, 189, 248, 0.3));
+          box-shadow: inset 0 0 0 2px rgba(14, 165, 233, 0.45);
+        }
+        .cell-is-generator {
+          background: linear-gradient(145deg, rgba(237, 233, 254, 0.95), rgba(221, 214, 254, 0.75));
+          box-shadow: inset 0 0 0 2px rgba(139, 92, 246, 0.45);
+        }
+        .cell-is-generator:hover {
+          background: linear-gradient(145deg, rgba(245, 243, 255, 1), rgba(233, 213, 255, 0.9));
+        }
+        .cell-generator-depleted {
+          opacity: 0.72;
+          filter: grayscale(0.35);
+        }
+        .cell-generator-depleted:hover {
+          opacity: 0.8;
+        }
         @keyframes shake {
           0%, 100% { transform: translateX(0); }
           25% { transform: translateX(-4px); }
@@ -434,6 +564,30 @@ export default function GameScreen({
         }
         .cell-unlocked {
           animation: cell-unlock-flash 0.3s ease-out forwards;
+        }
+        @keyframes dirty-loot-reveal {
+          0% {
+            transform: scale(1);
+            box-shadow: inset 0 0 0 0 transparent, 0 0 0 0 rgba(52, 211, 153, 0);
+          }
+          45% {
+            transform: scale(1.06);
+            box-shadow:
+              inset 0 0 12px rgba(167, 243, 208, 0.55),
+              0 0 18px 4px rgba(52, 211, 153, 0.45);
+          }
+          100% {
+            transform: scale(1);
+            box-shadow: inset 0 0 0 0 transparent, 0 0 0 0 transparent;
+          }
+        }
+        .cell-dirty-loot-pop {
+          animation: dirty-loot-reveal 0.48s cubic-bezier(0.34, 1.45, 0.64, 1);
+          z-index: 6;
+        }
+        .cell-locked {
+          background: linear-gradient(160deg, rgba(148, 163, 184, 0.45), rgba(100, 116, 139, 0.55));
+          box-shadow: inset 0 0 0 2px rgba(51, 65, 85, 0.55);
         }
         /* Препятствия: та же диагональная «blocked»-эстетика; dirty_2 тяжелее, dirty_1 светлее */
         .cell-dirty-2 {

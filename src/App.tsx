@@ -643,9 +643,9 @@ export default function App() {
     setDailyQuests((d) => applyQuestProgress(d, type, amount));
   }, []);
 
-  /** Автоочередь сюжета — только на экране игры (не поверх главного меню). */
+  /** Автоочередь сюжета — только на экране «Дом» (не поверх меню и мини-игры). */
   useEffect(() => {
-    if (!progState || currentScreen !== "game") return;
+    if (!progState || currentScreen !== "hub") return;
     setCurrentBeat((cur) => {
       if (cur) return cur;
       const next = new StoryEngine(shownBeats).getNextBeat(progState, ordersCompleted);
@@ -812,6 +812,7 @@ export default function App() {
           itemIsGenerator(itemDef) &&
           !isObstacleCellState(cell.cellState)
         ) {
+          if (state.energy <= 0) return;
           const remaining = cellGeneratorChargesRemaining(cell, genMax);
           if (remaining <= 0) return;
 
@@ -837,10 +838,9 @@ export default function App() {
             item: spawnItemId,
             generatorCharges: undefined,
           };
-          const freeRoll = Math.random() < playBonuses.free_spawn_chance;
-          const nextCharges = freeRoll ? remaining : remaining - 1;
+          const nextCharges = remaining - 1;
           newGrid[index] = { ...newGrid[index], generatorCharges: nextCharges };
-          setState({ ...state, grid: newGrid });
+          setState({ ...state, grid: newGrid, energy: state.energy - 1 });
           setLastAction({ type: "spawn", index: spawnIdx });
           sounds.select();
           return;
@@ -1386,7 +1386,7 @@ export default function App() {
         </div>
       )}
 
-      {currentScreen === "game" && currentBeat ? (
+      {currentScreen === "hub" && currentBeat ? (
         <DialogModal beat={currentBeat} onChoice={handleStoryChoice} />
       ) : null}
 

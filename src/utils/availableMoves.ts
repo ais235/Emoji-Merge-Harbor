@@ -1,16 +1,22 @@
 import type { GridCell, Order } from "../types";
-import { ALL_ITEMS, ITEM_CHAINS, isObstacleCellState } from "../types";
+import {
+  ALL_ITEMS,
+  INITIAL_GENERATOR_CHARGES,
+  ITEM_CHAINS,
+  isObstacleCellState,
+  itemIsGenerator,
+  itemIsResourcePickup,
+  cellGeneratorChargesRemaining,
+  orderCanDeliverFromGrid,
+} from "../types";
 
 /**
  * Есть ли слияние или выполнимый заказ (без учёта пустых клеток и спавна).
  */
-export function hasMergeOrCompletableOrder(
-  grid: GridCell[],
-  orders?: Pick<Order, "requiredItemId">[]
-): boolean {
+export function hasMergeOrCompletableOrder(grid: GridCell[], orders?: Order[]): boolean {
   if (orders?.length) {
     for (const o of orders) {
-      if (grid.some((c) => c.item === o.requiredItemId)) return true;
+      if (orderCanDeliverFromGrid(grid, o)) return true;
     }
   }
 
@@ -20,7 +26,7 @@ export function hasMergeOrCompletableOrder(
     const id = grid[i].item;
     if (!id) continue;
     const def = ALL_ITEMS[id];
-    if (!def) continue;
+    if (!def || itemIsGenerator(def) || itemIsResourcePickup(def)) continue;
     const chain = ITEM_CHAINS[def.chain];
     const nextItem = chain.items[def.level];
     if (!nextItem) continue;
@@ -35,26 +41,51 @@ export function hasMergeOrCompletableOrder(
   return false;
 }
 
+function hasGeneratorSpawnMove(grid: GridCell[], energy: number, generatorMaxCharges: number): boolean {
+  if (energy <= 0) return false;
+  const hasEmptyNormal = grid.some(
+    (c) => !isObstacleCellState(c.cellState) && c.item === null
+  );
+  if (!hasEmptyNormal) return false;
+  for (let i = 0; i < grid.length; i++) {
+    if (isObstacleCellState(grid[i].cellState)) continue;
+    const id = grid[i].item;
+    if (!id) continue;
+    const def = ALL_ITEMS[id];
+    if (def && itemIsGenerator(def) && cellGeneratorChargesRemaining(grid[i], generatorMaxCharges) > 0)
+      return true;
+  }
+  return false;
+}
+
+function hasResourcePickupClick(grid: GridCell[]): boolean {
+  for (const c of grid) {
+    if (isObstacleCellState(c.cellState)) continue;
+    if (!c.item) continue;
+    const def = ALL_ITEMS[c.item];
+    if (def && itemIsResourcePickup(def)) return true;
+  }
+  return false;
+}
+
 /**
- * Есть ли «эффективный» ход: слияние / заказ, или пустая клетка при положительной энергии (спавн).
- * При энергии 0 пустые клетки не считаются ходом.
+ * Есть ли «эффективный» ход: слияние / заказ, или клик по генератору при наличии пустой клетки.
  */
 export function hasEffectiveMoves(
   grid: GridCell[],
-  orders: Pick<Order, "requiredItemId">[] | undefined,
-  energy: number
+  orders: Order[] | undefined,
+  energy: number,
+  generatorMaxCharges: number
 ): boolean {
   if (hasMergeOrCompletableOrder(grid, orders)) return true;
-  if (energy > 0 && grid.some((c) => c.item === null)) return true;
+  if (hasGeneratorSpawnMove(grid, energy, generatorMaxCharges)) return true;
+  if (hasResourcePickupClick(grid)) return true;
   return false;
 }
 
 /**
  * Есть ли ход с точки зрения сетки (пустая клетка или слияние / заказ), без учёта энергии.
  */
-export function hasAvailableMoves(
-  grid: GridCell[],
-  orders?: Pick<Order, "requiredItemId">[]
-): boolean {
-  return hasEffectiveMoves(grid, orders, Number.POSITIVE_INFINITY);
+export function hasAvailableMoves(grid: GridCell[], orders?: Order[]): boolean {
+  return hasEffectiveMoves(grid, orders, Number.POSITIVE_INFINITY, INITIAL_GENERATOR_CHARGES);
 }
