@@ -12,17 +12,32 @@ import {
   ALL_ITEMS,
   ITEM_CHAINS,
   Order,
+  type OrderRequirement,
+  orderIsFulfilled,
+  findFirstCellIndexForOrderDelivery,
   ProgressionState,
   type AppScreen,
   type ActiveZone,
   type GridCell,
   type CoinFlyState,
   isObstacleCellState,
+  itemIsGenerator,
+  INITIAL_GENERATOR_CHARGES,
+  cellGeneratorChargesRemaining,
+  KEY_ITEM_ID,
+  chainsEligibleForLootAndOrders,
+  itemIsResourcePickup,
+  COIN_PICKUP_ITEM_ID,
+  ENERGY_PICKUP_ITEM_ID,
+  GENERATOR_RESOURCE_DROP_CHANCE,
 } from "./types";
-import HomeScreen from "./screens/HomeScreen";
+import MainMenuScreen from "./screens/MainMenuScreen";
+import CafeHubScreen from "./screens/CafeHubScreen";
 import RoomScreen from "./screens/RoomScreen";
 import GameScreen from "./screens/GameScreen";
-import { ProgressionManager, EconomyManager } from "./progressionManager";
+import { ProgressionManager, EconomyManager, getGeneratorMaxCharges } from "./progressionManager";
+import CoinShopModal from "./components/CoinShopModal";
+import SettingsModal from "./components/SettingsModal";
 import DialogModal from "./components/DialogModal";
 import OnboardingOverlay from "./components/OnboardingOverlay";
 import DailyBonusModal from "./components/DailyBonusModal";
@@ -40,9 +55,18 @@ import {
 import { StoryEngine } from "./story/StoryEngine";
 import { STORY_BEATS } from "./story/storyData";
 import type { StoryBeat } from "./story/storyData";
-import { initAudio, sounds } from "./utils/sounds";
-import { getNeighborIndices } from "./utils/grid";
+import { initAudio, initSoundPreferenceFromStorage, isSoundMuted, setSoundMuted, sounds } from "./utils/sounds";
+import { getNeighborIndices, pickEmptyCellForGeneratorSpawn } from "./utils/grid";
+import { trySpawnLootOnDirtyOneClear } from "./utils/dirtyCleanSpawn";
 import { hasEffectiveMoves } from "./utils/availableMoves";
+import {
+  defaultReconstructionState,
+  getCurrentReconstructionStage,
+  normalizeReconstructionState,
+  tickReconstructionAfterOrderComplete,
+  tryCompleteReconstructionItemsStage,
+  tryDeliverReconstructionItem,
+} from "./reconstruction";
 
 const SHOWN_BEATS_KEY = "shownBeats";
 const LAST_DAILY_BONUS_KEY = "lastDailyBonus";
@@ -54,10 +78,6 @@ const MAX_GRID_CELLS = GRID_WIDTH * GRID_HEIGHT;
 const INITIAL_ENERGY = 100;
 /** 1 е. энергии каждые 10 с, пока energy ниже maxEnergy. */
 const ENERGY_REGEN_INTERVAL_MS = 10_000;
-/** Доля бесплатного спавна (без траты энергии). */
-const FREE_SPAWN_CHANCE = 0.25;
-/** Базовая энергия за «СОЗДАТЬ» (>1 нужна, чтобы Math.round(base×(1−gen_speed)) давала заметную скидку). */
-const SPAWN_COST = 2;
 /** Очистка грязи за монеты: dirty_2 → dirty_1, dirty_1 → normal. */
 const COIN_CLEAN_DIRTY2_TO_DIRTY1 = 5;
 const COIN_CLEAN_DIRTY1_TO_NORMAL = 10;
@@ -71,6 +91,55 @@ const STORAGE_KEY = "emoji_merge_harbor_state_v2"; // Changed key to avoid old s
 
 function createNormalEmptyGridCell(): GridCell {
   return { item: null, cellState: "normal" };
+}
+
+/** Одна корзина-генератор в первой свободной обычной клетке (новая сетка / сессия). */
+function placeInitialGenerator(grid: GridCell[]): GridCell[] {
+  const next = grid.map((c) => ({ ...c }));
+  const i = next.findIndex((c) => c.item === null && c.cellState === "normal");
+  if (i >= 0) {
+    next[i] = {
+      ...next[i],
+      item: "basket_generator",
+      generatorCharges: INITIAL_GENERATOR_CHARGES,
+    };
+  }
+  return next;
+}
+
+/** После обмена предметами между клетками — корректные `generatorCharges`. */
+function gridCellAfterPlacingItem(
+  targetCell: GridCell,
+  newItem: string | null,
+  sourceCell: GridCell,
+  generatorMaxCharges: number
+): GridCell {
+  if (!newItem) {
+    return { item: null, cellState: targetCell.cellState };
+  }
+  const d = ALL_ITEMS[newItem];
+  if (d && itemIsGenerator(d)) {
+    return {
+      ...targetCell,
+      item: newItem,
+      generatorCharges: cellGeneratorChargesRemaining(sourceCell, generatorMaxCharges),
+    };
+  }
+  return { ...targetCell, item: newItem, generatorCharges: undefined };
+}
+
+function gridHasGenerator(grid: GridCell[]): boolean {
+  return grid.some((c) => {
+    if (!c.item) return false;
+    const d = ALL_ITEMS[c.item];
+    return Boolean(d && itemIsGenerator(d));
+  });
+}
+
+/** Старые сохранения без генератора: одна корзина, чтобы не остаться без спавна. */
+function ensureGeneratorOnGrid(grid: GridCell[]): GridCell[] {
+  if (gridHasGenerator(grid)) return grid;
+  return placeInitialGenerator(grid.map((c) => ({ ...c })));
 }
 
 /** Только для теста: при новой игре N случайных ячеек — препятствие dirty_2 (загрузка из storage не трогается). */
@@ -89,6 +158,49 @@ function applyTestRandomDirty2Cells(grid: GridCell[]): GridCell[] {
   return next;
 }
 
+/** Тест: несколько пустых normal-клеток становятся locked (ключ на поле выдаётся отдельно). */
+const TEST_RANDOM_LOCKED_CELL_COUNT = 2;
+
+function applyTestRandomLockedCells(grid: GridCell[]): GridCell[] {
+  const next = grid.map((c) => ({ ...c }));
+  const candidates: number[] = [];
+  for (let i = 0; i < next.length; i++) {
+    if (next[i].cellState === "normal" && next[i].item === null) {
+      candidates.push(i);
+    }
+  }
+  const n = Math.min(TEST_RANDOM_LOCKED_CELL_COUNT, candidates.length);
+  const picks = new Set<number>();
+  while (picks.size < n) {
+    picks.add(candidates[Math.floor(Math.random() * candidates.length)]!);
+  }
+  picks.forEach((i) => {
+    next[i] = { ...next[i], cellState: "locked" };
+  });
+  return next;
+}
+
+function placeInitialKey(grid: GridCell[]): GridCell[] {
+  const next = grid.map((c) => ({ ...c }));
+  const i = next.findIndex((c) => c.item === null && c.cellState === "normal");
+  if (i >= 0) {
+    next[i] = { ...next[i], item: KEY_ITEM_ID };
+  }
+  return next;
+}
+
+function buildFreshPlayGrid(): GridCell[] {
+  return placeInitialKey(
+    placeInitialGenerator(
+      applyTestRandomLockedCells(
+        applyTestRandomDirty2Cells(
+          Array.from({ length: MAX_GRID_CELLS }, () => createNormalEmptyGridCell())
+        )
+      )
+    )
+  );
+}
+
 function normalizeGridFromStorage(rawGrid: unknown, expectedLen: number): GridCell[] | null {
   if (!Array.isArray(rawGrid) || rawGrid.length !== expectedLen) return null;
   return rawGrid.map((entry): GridCell => {
@@ -99,25 +211,114 @@ function normalizeGridFromStorage(rawGrid: unknown, expectedLen: number): GridCe
         rawItem === null ? null : typeof rawItem === "string" ? rawItem : null;
       let cellState: GridCell["cellState"] = "normal";
       const raw = o.cellState;
-      if (raw === "normal" || raw === "dirty_1" || raw === "dirty_2") {
+      if (raw === "normal" || raw === "dirty_1" || raw === "dirty_2" || raw === "locked") {
         cellState = raw;
       } else if (raw === "blocked") {
         cellState = "dirty_2";
       }
-      return { item, cellState };
+      const rawCh = o.generatorCharges;
+      const parsedCharges =
+        typeof rawCh === "number" && Number.isFinite(rawCh) ? Math.max(0, Math.floor(rawCh)) : undefined;
+      const base: GridCell = { item, cellState };
+      if (item) {
+        const d = ALL_ITEMS[item];
+        if (d && itemIsGenerator(d)) {
+          base.generatorCharges =
+            parsedCharges !== undefined ? parsedCharges : INITIAL_GENERATOR_CHARGES;
+        }
+      }
+      return base;
     }
     if (entry === null || typeof entry === "string") {
-      return { item: entry, cellState: "normal" };
+      const legacyItem = entry === null ? null : entry;
+      const base: GridCell = { item: legacyItem, cellState: "normal" };
+      if (legacyItem) {
+        const d = ALL_ITEMS[legacyItem];
+        if (d && itemIsGenerator(d)) {
+          base.generatorCharges = INITIAL_GENERATOR_CHARGES;
+        }
+      }
+      return base;
     }
     return createNormalEmptyGridCell();
   });
 }
 
 function createInitialOrders(): Order[] {
+  const baseM = EconomyManager.calculateOrderReward("medium");
+  const baseS = EconomyManager.calculateOrderReward("simple");
+  const mult1 = 1 + 0.25 * (3 - 1) + 0.1 * (2 - 1); /* 2×f2 + 1×f3 */
+  const mult2 = 1 + 0.25 * (2 - 1); /* 2×s2 */
   return [
-    { id: "o1", requiredItemId: "f2", rewardCoins: 15, rewardXp: 10 },
-    { id: "o2", requiredItemId: "s2", rewardCoins: 20, rewardXp: 15 },
+    {
+      id: "o1",
+      requirements: [
+        { itemId: "f2", count: 2 },
+        { itemId: "f3", count: 1 },
+      ],
+      delivered: {},
+      rewardCoins: Math.round(baseM.coins * mult1),
+      rewardXp: Math.round(baseM.xp * mult1),
+    },
+    {
+      id: "o2",
+      requirements: [{ itemId: "s2", count: 2 }],
+      delivered: {},
+      rewardCoins: Math.round(baseS.coins * mult2),
+      rewardXp: Math.round(baseS.xp * mult2),
+    },
   ];
+}
+
+function normalizeOrdersFromStorage(raw: unknown[]): Order[] {
+  const out: Order[] = [];
+  for (const o of raw) {
+    const norm = normalizeOneOrder(o);
+    if (norm) out.push(norm);
+  }
+  return out;
+}
+
+function normalizeOneOrder(o: unknown): Order | null {
+  if (!o || typeof o !== "object") return null;
+  const r = o as Record<string, unknown>;
+  const id = typeof r.id === "string" ? r.id : null;
+  if (!id) return null;
+  const rewardCoins = typeof r.rewardCoins === "number" ? r.rewardCoins : 15;
+  const rewardXp = typeof r.rewardXp === "number" ? r.rewardXp : 10;
+
+  let requirements: OrderRequirement[];
+  if (Array.isArray(r.requirements)) {
+    requirements = r.requirements
+      .map((x) => {
+        if (!x || typeof x !== "object") return null;
+        const q = x as Record<string, unknown>;
+        const itemId = typeof q.itemId === "string" ? q.itemId : null;
+        const count = typeof q.count === "number" && q.count >= 1 ? Math.floor(q.count) : null;
+        if (!itemId || !count) return null;
+        return { itemId, count };
+      })
+      .filter((x): x is OrderRequirement => x !== null);
+    if (requirements.length === 0) return null;
+  } else if (typeof r.requiredItemId === "string") {
+    requirements = [{ itemId: r.requiredItemId, count: 1 }];
+  } else {
+    return null;
+  }
+
+  let delivered: Partial<Record<string, number>> = {};
+  if (r.delivered && typeof r.delivered === "object" && !Array.isArray(r.delivered)) {
+    for (const [k, v] of Object.entries(r.delivered as Record<string, unknown>)) {
+      if (typeof v === "number" && v >= 1) delivered[k] = Math.floor(v);
+    }
+  }
+
+  for (const req of requirements) {
+    const d = delivered[req.itemId] ?? 0;
+    if (d > req.count) delivered[req.itemId] = req.count;
+  }
+
+  return { id, requirements, delivered, rewardCoins, rewardXp };
 }
 
 function hydrateGameStateFromStorage(raw: unknown): GameState | null {
@@ -126,12 +327,29 @@ function hydrateGameStateFromStorage(raw: unknown): GameState | null {
   const grid = normalizeGridFromStorage(g.grid, MAX_GRID_CELLS);
   if (!grid) return null;
   return {
-    grid,
+    grid: ensureGeneratorOnGrid(grid),
     energy: typeof g.energy === "number" ? g.energy : INITIAL_ENERGY,
     maxEnergy: typeof g.maxEnergy === "number" ? g.maxEnergy : INITIAL_ENERGY,
-    orders: Array.isArray(g.orders) ? (g.orders as Order[]) : createInitialOrders(),
+    orders: (() => {
+      const raw = Array.isArray(g.orders) ? normalizeOrdersFromStorage(g.orders) : [];
+      return raw.length > 0 ? raw : createInitialOrders();
+    })(),
     isFirstLaunch: g.isFirstLaunch !== false,
   };
+}
+
+/** Валидное сохранение в localStorage (игровое состояние + прогрессия). */
+function isValidPersistedSave(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== "object") return false;
+  const p = parsed as Record<string, unknown>;
+  if (!p.gameState || !p.progState || typeof p.progState !== "object") return false;
+  const pr = p.progState as Record<string, unknown>;
+  if (typeof pr.level !== "number" || typeof pr.coins !== "number" || typeof pr.xp !== "number") {
+    return false;
+  }
+  if (pr.unlockedZones !== undefined && !Array.isArray(pr.unlockedZones)) return false;
+  if (pr.purchasedUpgrades !== undefined && !Array.isArray(pr.purchasedUpgrades)) return false;
+  return hydrateGameStateFromStorage(p.gameState) !== null;
 }
 
 export default function App() {
@@ -142,9 +360,9 @@ export default function App() {
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [showLevelUpFlash, setShowLevelUpFlash] = useState(false);
   const [showOrderCoinBonus, setShowOrderCoinBonus] = useState(false);
-  /** Разработка: спавн без списания энергии и кнопка «СОЗДАТЬ» при 0 энергии. */
+  /** Разработка: без ограничений энергии там, где она ещё используется. */
   const [devMode, setDevMode] = useState(true);
-  const [currentScreen, setCurrentScreen] = useState<AppScreen>("home");
+  const [currentScreen, setCurrentScreen] = useState<AppScreen>("menu");
   const [activeZone, setActiveZone] = useState<ActiveZone>("hall");
   const [lastAction, setLastAction] = useState<{ type: "merge" | "spawn" | "order", index?: number } | null>(null);
   const [currentBeat, setCurrentBeat] = useState<StoryBeat | null>(null);
@@ -156,6 +374,8 @@ export default function App() {
   const [cellMergePopIndex, setCellMergePopIndex] = useState<number | null>(null);
   /** Индексы соседей, только что очищенных от препятствия после merge (краткая анимация). */
   const [cellUnlockedFlashIndices, setCellUnlockedFlashIndices] = useState<number[]>([]);
+  /** Краткая анимация появления лута при очистке dirty_1 → normal. */
+  const [cellDirtyLootFlashIndices, setCellDirtyLootFlashIndices] = useState<number[]>([]);
   const [cellShakePair, setCellShakePair] = useState<[number, number] | null>(null);
   const [coinFly, setCoinFly] = useState<CoinFlyState | null>(null);
   /** Нет эффективных ходов (слияние / заказ / спавн при энергии); UI мягкий, ввод не блокируем. */
@@ -164,8 +384,12 @@ export default function App() {
   const [isSessionComplete, setIsSessionComplete] = useState(false);
   /** Режим: клик по грязной клетке тратит монеты на очистку (без Shift). */
   const [paidCleanMode, setPaidCleanMode] = useState(false);
-  const [showFreeSpawnLabel, setShowFreeSpawnLabel] = useState(false);
   const [purchaseSparkleNonce, setPurchaseSparkleNonce] = useState(0);
+  const [coinShopOpen, setCoinShopOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Была успешная загрузка из STORAGE_KEY при старте приложения. */
+  const [saveLoadedFromDisk, setSaveLoadedFromDisk] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
   const [screenEntering, setScreenEntering] = useState(false);
   const skipScreenTransitionRef = useRef(true);
 
@@ -196,14 +420,13 @@ export default function App() {
       if (!s) return s;
       return {
         ...s,
-        grid: applyTestRandomDirty2Cells(
-          Array.from({ length: MAX_GRID_CELLS }, () => createNormalEmptyGridCell())
-        ),
+        grid: buildFreshPlayGrid(),
       };
     });
     setSelectedCell(null);
     setCellMergePopIndex(null);
     setCellUnlockedFlashIndices([]);
+    setCellDirtyLootFlashIndices([]);
     setCellShakePair(null);
     setCoinFly(null);
   }, []);
@@ -214,9 +437,7 @@ export default function App() {
       if (!s) return s;
       return {
         ...s,
-        grid: applyTestRandomDirty2Cells(
-          Array.from({ length: MAX_GRID_CELLS }, () => createNormalEmptyGridCell())
-        ),
+        grid: buildFreshPlayGrid(),
         orders: createInitialOrders(),
       };
     });
@@ -225,6 +446,7 @@ export default function App() {
     setSelectedCell(null);
     setCellMergePopIndex(null);
     setCellUnlockedFlashIndices([]);
+    setCellDirtyLootFlashIndices([]);
     setCellShakePair(null);
     setCoinFly(null);
   }, []);
@@ -232,21 +454,24 @@ export default function App() {
   const handleSessionExitHome = useCallback(() => {
     setIsSessionComplete(false);
     setSessionOrdersCompleted(0);
-    setCurrentScreen("home");
+    setShowTutorial(false);
+    setCurrentScreen("hub");
   }, []);
 
   const handleNoMovesExitHome = useCallback(() => {
-    setCurrentScreen("home");
+    setShowTutorial(false);
+    setCurrentScreen("hub");
     setSelectedCell(null);
     setCellMergePopIndex(null);
     setCellUnlockedFlashIndices([]);
+    setCellDirtyLootFlashIndices([]);
     setCellShakePair(null);
     setCoinFly(null);
   }, []);
 
-  /** Победа сессии не показывает «нет ходов». Иначе — нет слияний, нет заказов, нет спавна (пустые при 0 энергии не считаются). */
+  /** Победа сессии не показывает «нет ходов». Иначе — нет слияний, заказов и выдачи с генератора. */
   useEffect(() => {
-    if (!state || currentScreen !== "game") {
+    if (!state || !progState || currentScreen !== "game") {
       setIsNoMoves(false);
       return;
     }
@@ -254,8 +479,9 @@ export default function App() {
       setIsNoMoves(false);
       return;
     }
-    setIsNoMoves(!hasEffectiveMoves(state.grid, state.orders, state.energy));
-  }, [state, currentScreen, isSessionComplete]);
+    const genMax = getGeneratorMaxCharges(progState.purchasedUpgrades);
+    setIsNoMoves(!hasEffectiveMoves(state.grid, state.orders, state.energy, genMax));
+  }, [state, progState, currentScreen, isSessionComplete]);
 
   useEffect(() => {
     if (currentScreen !== "game") setPaidCleanMode(false);
@@ -281,11 +507,10 @@ export default function App() {
       coins: 0,
       unlockedZones: ["hall"],
       purchasedUpgrades: [],
+      reconstruction: defaultReconstructionState(),
     };
     const initialGameState: GameState = {
-      grid: applyTestRandomDirty2Cells(
-        Array.from({ length: MAX_GRID_CELLS }, () => createNormalEmptyGridCell())
-      ),
+      grid: buildFreshPlayGrid(),
       energy: startEnergy,
       maxEnergy: startEnergy,
       orders: createInitialOrders(),
@@ -297,7 +522,8 @@ export default function App() {
     setSessionOrdersCompleted(0);
     setIsSessionComplete(false);
     setPaidCleanMode(false);
-    setCurrentScreen("home");
+    setShowTutorial(false);
+    setCurrentScreen("menu");
     setActiveZone("hall");
     setShownBeats([]);
     setOrdersCompleted(0);
@@ -311,7 +537,7 @@ export default function App() {
   };
 
   const handleFullReset = useCallback(() => {
-    if (!window.confirm("Reset game progress?")) return;
+    if (!window.confirm("Ты уверен? Весь прогресс и сохранения будут удалены.")) return;
     try {
       localStorage.clear();
     } catch {
@@ -333,24 +559,35 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.gameState && parsed.progState) {
-          const hydrated = hydrateGameStateFromStorage(parsed.gameState);
-          if (hydrated) {
-            setState(hydrated);
-            setProgState(parsed.progState as ProgressionState);
-            setOrdersCompleted(
-              typeof parsed.ordersCompleted === "number" ? parsed.ordersCompleted : 0
-            );
-            setShownBeats(sb);
-            const streak = Number(localStorage.getItem(DAILY_STREAK_KEY) || "1");
-            setDailyBonusDay(Math.min(7, Math.max(1, streak)));
-            return;
-          }
+        if (isValidPersistedSave(parsed)) {
+          const hydrated = hydrateGameStateFromStorage(
+            (parsed as { gameState: unknown }).gameState
+          )!;
+          setSaveLoadedFromDisk(true);
+          setState(hydrated);
+          const rawProg = (parsed as { progState: ProgressionState }).progState;
+          setProgState({
+            ...rawProg,
+            reconstruction: normalizeReconstructionState(
+              rawProg.reconstruction as unknown
+            ),
+          });
+          setOrdersCompleted(
+            typeof (parsed as { ordersCompleted?: unknown }).ordersCompleted === "number"
+              ? (parsed as { ordersCompleted: number }).ordersCompleted
+              : 0
+          );
+          setShownBeats(sb);
+          const streak = Number(localStorage.getItem(DAILY_STREAK_KEY) || "1");
+          setDailyBonusDay(Math.min(7, Math.max(1, streak)));
+          return;
         }
       }
+      setSaveLoadedFromDisk(false);
       resetGame();
     } catch (e) {
       console.error("Failed to load state:", e);
+      setSaveLoadedFromDisk(false);
       resetGame();
     }
   }, []);
@@ -382,6 +619,11 @@ export default function App() {
   }, [dailyQuests]);
 
   useEffect(() => {
+    initSoundPreferenceFromStorage();
+    setSoundOn(!isSoundMuted());
+  }, []);
+
+  useEffect(() => {
     const onFirst = () => initAudio();
     window.addEventListener("pointerdown", onFirst, { once: true });
     return () => window.removeEventListener("pointerdown", onFirst);
@@ -401,18 +643,18 @@ export default function App() {
     setDailyQuests((d) => applyQuestProgress(d, type, amount));
   }, []);
 
-  /** Автоочередь сюжета: прогресс / заказы / показанные биты */
+  /** Автоочередь сюжета — только на экране игры (не поверх главного меню). */
   useEffect(() => {
-    if (!progState) return;
+    if (!progState || currentScreen !== "game") return;
     setCurrentBeat((cur) => {
       if (cur) return cur;
       const next = new StoryEngine(shownBeats).getNextBeat(progState, ordersCompleted);
       return next ?? null;
     });
-  }, [progState, shownBeats, ordersCompleted]);
+  }, [progState, shownBeats, ordersCompleted, currentScreen]);
 
   useEffect(() => {
-    if (currentScreen !== "home" || !progState) return;
+    if (currentScreen !== "hub" || !progState) return;
     const last = localStorage.getItem(LAST_DAILY_BONUS_KEY);
     const now = Date.now();
     const eligible =
@@ -424,85 +666,88 @@ export default function App() {
     }
   }, [currentScreen, progState]);
 
+  const handleBackToMainMenu = useCallback(() => {
+    setCoinShopOpen(false);
+    setCurrentScreen("menu");
+  }, []);
+
   const generateNewOrder = (level: number): Order => {
-    const chains = Object.values(ITEM_CHAINS);
-    const randomChain = chains[Math.floor(Math.random() * chains.length)];
+    const chains = chainsEligibleForLootAndOrders();
     const maxItemLevel = Math.min(level + 1, 7);
-    const randomLevel = Math.floor(Math.random() * maxItemLevel) + 1;
-    const item = randomChain.items[randomLevel - 1];
-    
-    const difficulty = randomLevel < 3 ? "simple" : randomLevel < 5 ? "medium" : "hard";
-    const reward = EconomyManager.calculateOrderReward(difficulty);
+    const typeCount =
+      level <= 2 ? 1 : level <= 4 ? 1 + Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 2);
+
+    const requirements: OrderRequirement[] = [];
+    for (let t = 0; t < typeCount; t++) {
+      const randomChain = chains[Math.floor(Math.random() * chains.length)];
+      const randomLevel = Math.floor(Math.random() * maxItemLevel) + 1;
+      const item = randomChain.items[randomLevel - 1];
+      const countBase = randomLevel <= 2 ? 1 + Math.floor(Math.random() * 2) : 1;
+      const countExtra = level >= 5 && Math.random() < 0.35 ? 1 : 0;
+      const count = countBase + countExtra;
+      const ex = requirements.find((q) => q.itemId === item.id);
+      if (ex) ex.count += count;
+      else requirements.push({ itemId: item.id, count });
+    }
+
+    const maxReqLevel = Math.max(
+      ...requirements.map((req) => {
+        const d = ALL_ITEMS[req.itemId];
+        return d && "level" in d ? d.level : 1;
+      })
+    );
+    const difficulty = maxReqLevel < 3 ? "simple" : maxReqLevel < 5 ? "medium" : "hard";
+    const base = EconomyManager.calculateOrderReward(difficulty);
+    const totalUnits = requirements.reduce((s, q) => s + q.count, 0);
+    const mult = 1 + 0.25 * (totalUnits - 1) + 0.1 * (requirements.length - 1);
+    const rewardCoins = Math.round(base.coins * mult);
+    const rewardXp = Math.round(base.xp * mult);
 
     return {
-      id: Math.random().toString(36).substr(2, 9),
-      requiredItemId: item.id,
-      rewardCoins: reward.coins,
-      rewardXp: reward.xp,
+      id: Math.random().toString(36).slice(2, 11),
+      requirements,
+      delivered: {},
+      rewardCoins,
+      rewardXp,
     };
-  };
-
-  const handleSpawn = () => {
-    if (!state || !progState || isSessionComplete) return;
-
-    const spawnBonuses = new ProgressionManager(progState).getActiveBonuses();
-    const finalCost = Math.max(1, Math.round(SPAWN_COST * (1 - spawnBonuses.gen_speed)));
-    if (!devMode && state.energy < finalCost) return;
-
-    const emptyIndices = state.grid
-      .map((cell, index) => (cell.item === null ? index : null))
-      .filter((index): index is number => index !== null);
-
-    if (emptyIndices.length === 0) return;
-
-    const randomIndex = emptyIndices[Math.floor(Math.random() * emptyIndices.length)];
-    const chains = Object.values(ITEM_CHAINS);
-    const randomChain = chains[Math.floor(Math.random() * chains.length)];
-    const newItemId = randomChain.items[0].id;
-
-    const newGrid = [...state.grid];
-    newGrid[randomIndex] = { ...newGrid[randomIndex], item: newItemId };
-
-    setState({
-      ...state,
-      grid: newGrid,
-      energy: devMode ? state.energy : state.energy - finalCost,
-    });
-    setLastAction({ type: "spawn", index: randomIndex });
-  };
-
-  const handleFreeSpawnAttempt = () => {
-    if (!state || !progState || isSessionComplete) return;
-
-    const emptyIndices = state.grid
-      .map((cell, index) => (cell.item === null ? index : null))
-      .filter((index): index is number => index !== null);
-
-    if (emptyIndices.length === 0) return;
-    if (Math.random() >= FREE_SPAWN_CHANCE) return;
-
-    const randomIndex = emptyIndices[Math.floor(Math.random() * emptyIndices.length)];
-    const chains = Object.values(ITEM_CHAINS);
-    const randomChain = chains[Math.floor(Math.random() * chains.length)];
-    const newItemId = randomChain.items[0].id;
-    const newGrid = [...state.grid];
-    newGrid[randomIndex] = { ...newGrid[randomIndex], item: newItemId };
-
-    console.log("Free spawn!");
-    setShowFreeSpawnLabel(true);
-    window.setTimeout(() => setShowFreeSpawnLabel(false), 1200);
-
-    setState({ ...state, grid: newGrid });
-    setLastAction({ type: "spawn", index: randomIndex });
   };
 
   const handleCellClick = (index: number, shiftKey = false) => {
     if (!state || !progState || isSessionComplete) return;
 
+    const playBonuses = new ProgressionManager(progState).getActiveBonuses();
+    const genMax = getGeneratorMaxCharges(progState.purchasedUpgrades);
+
     const cell = state.grid[index];
     const wantsPaidClean = shiftKey || paidCleanMode;
 
-    if (isObstacleCellState(cell.cellState) && wantsPaidClean) {
+    if (cell.cellState === "locked") {
+      if (selectedCell === null) return;
+      if (selectedCell === index) {
+        setSelectedCell(null);
+        return;
+      }
+      const srcCell = state.grid[selectedCell];
+      if (isObstacleCellState(srcCell.cellState)) return;
+      if (srcCell.item === KEY_ITEM_ID) {
+        const newGrid = [...state.grid];
+        newGrid[index] = { ...newGrid[index], cellState: "normal" };
+        newGrid[selectedCell] = { item: null, cellState: newGrid[selectedCell].cellState };
+        setState({ ...state, grid: newGrid });
+        setSelectedCell(null);
+        sounds.purchase();
+        return;
+      }
+      setCellShakePair([selectedCell, index]);
+      window.setTimeout(() => setCellShakePair(null), 300);
+      setSelectedCell(null);
+      return;
+    }
+
+    if (
+      wantsPaidClean &&
+      (cell.cellState === "dirty_1" || cell.cellState === "dirty_2")
+    ) {
       const cost =
         cell.cellState === "dirty_2" ? COIN_CLEAN_DIRTY2_TO_DIRTY1 : COIN_CLEAN_DIRTY1_TO_NORMAL;
       if (progState.coins < cost) return;
@@ -516,6 +761,18 @@ export default function App() {
         newGrid[index] = { ...newGrid[index], cellState: "dirty_1" };
       } else {
         newGrid[index] = { ...newGrid[index], cellState: "normal" };
+        const lootAt = trySpawnLootOnDirtyOneClear(
+          newGrid,
+          index,
+          GRID_WIDTH,
+          GRID_HEIGHT,
+          playBonuses.dirty_drop_chance
+        );
+        if (lootAt !== null) {
+          setCellDirtyLootFlashIndices([lootAt]);
+          window.setTimeout(() => setCellDirtyLootFlashIndices([]), 480);
+          sounds.select();
+        }
       }
       setState({ ...state, grid: newGrid });
       setSelectedCell(null);
@@ -529,7 +786,65 @@ export default function App() {
     if (isObstacleCellState(cell.cellState)) return;
 
     if (selectedCell === null) {
-      if (state.grid[index].item !== null) {
+      const clickedId = state.grid[index].item;
+      if (clickedId !== null) {
+        const itemDef = ALL_ITEMS[clickedId];
+        if (itemDef && itemIsResourcePickup(itemDef) && !isObstacleCellState(cell.cellState)) {
+          const newGrid = [...state.grid];
+          newGrid[index] = { item: null, cellState: newGrid[index].cellState };
+          if (itemDef.grantsCoins > 0) {
+            const manager = new ProgressionManager(progState);
+            manager.addCoins(itemDef.grantsCoins);
+            setProgState(manager.getState());
+            updateQuestProgress("coins", itemDef.grantsCoins);
+          }
+          const nextEnergy =
+            itemDef.grantsEnergy > 0
+              ? Math.min(state.maxEnergy, state.energy + itemDef.grantsEnergy)
+              : state.energy;
+          setState({ ...state, grid: newGrid, energy: nextEnergy });
+          setSelectedCell(null);
+          sounds.select();
+          return;
+        }
+        if (
+          itemDef &&
+          itemIsGenerator(itemDef) &&
+          !isObstacleCellState(cell.cellState)
+        ) {
+          const remaining = cellGeneratorChargesRemaining(cell, genMax);
+          if (remaining <= 0) return;
+
+          const spawnIdx = pickEmptyCellForGeneratorSpawn(
+            state.grid,
+            index,
+            GRID_WIDTH,
+            GRID_HEIGHT
+          );
+          if (spawnIdx === null) return;
+          const chain = ITEM_CHAINS[itemDef.spawnsChainId];
+          const lvl1 = chain?.items[0];
+          if (!lvl1) return;
+
+          let spawnItemId = lvl1.id;
+          if (Math.random() < GENERATOR_RESOURCE_DROP_CHANCE) {
+            spawnItemId = Math.random() < 0.5 ? COIN_PICKUP_ITEM_ID : ENERGY_PICKUP_ITEM_ID;
+          }
+
+          const newGrid = [...state.grid];
+          newGrid[spawnIdx] = {
+            ...newGrid[spawnIdx],
+            item: spawnItemId,
+            generatorCharges: undefined,
+          };
+          const freeRoll = Math.random() < playBonuses.free_spawn_chance;
+          const nextCharges = freeRoll ? remaining : remaining - 1;
+          newGrid[index] = { ...newGrid[index], generatorCharges: nextCharges };
+          setState({ ...state, grid: newGrid });
+          setLastAction({ type: "spawn", index: spawnIdx });
+          sounds.select();
+          return;
+        }
         sounds.select();
         setSelectedCell(index);
       }
@@ -542,15 +857,22 @@ export default function App() {
 
         if (itemAId && itemBId && itemAId === itemBId) {
           const itemDef = ALL_ITEMS[itemAId];
+          if (itemIsGenerator(itemDef) || itemIsResourcePickup(itemDef)) {
+            setCellShakePair([selectedCell, index]);
+            window.setTimeout(() => setCellShakePair(null), 300);
+            setSelectedCell(null);
+            return;
+          }
           const chain = ITEM_CHAINS[itemDef.chain];
           const nextItem = chain.items[itemDef.level];
 
           if (nextItem) {
             const newGrid = [...state.grid];
-            newGrid[selectedCell] = { ...newGrid[selectedCell], item: null };
-            newGrid[index] = { ...newGrid[index], item: nextItem.id };
+            newGrid[selectedCell] = { item: null, cellState: newGrid[selectedCell].cellState };
+            newGrid[index] = { ...newGrid[index], item: nextItem.id, generatorCharges: undefined };
 
             const unlockedNeighborIndices: number[] = [];
+            const dirtyLootSpawnCells: number[] = [];
             let cleaningReward = 0;
             for (const ni of getNeighborIndices(index, GRID_WIDTH, GRID_HEIGHT)) {
               const cs = newGrid[ni].cellState;
@@ -562,6 +884,14 @@ export default function App() {
                 newGrid[ni] = { ...newGrid[ni], cellState: "normal" };
                 unlockedNeighborIndices.push(ni);
                 cleaningReward += 3;
+                const lootAt = trySpawnLootOnDirtyOneClear(
+                  newGrid,
+                  ni,
+                  GRID_WIDTH,
+                  GRID_HEIGHT,
+                  playBonuses.dirty_drop_chance
+                );
+                if (lootAt !== null) dirtyLootSpawnCells.push(lootAt);
               }
             }
 
@@ -593,6 +923,11 @@ export default function App() {
               setCellUnlockedFlashIndices(unlockedNeighborIndices);
               window.setTimeout(() => setCellUnlockedFlashIndices([]), 300);
             }
+            if (dirtyLootSpawnCells.length > 0) {
+              setCellDirtyLootFlashIndices(dirtyLootSpawnCells);
+              window.setTimeout(() => setCellDirtyLootFlashIndices([]), 480);
+              sounds.select();
+            }
             if (cleaningReward > 0) {
               setCoinFly({ source: "clean", cellIndex: index, amount: cleaningReward });
               window.setTimeout(() => setCoinFly(null), 800);
@@ -610,8 +945,8 @@ export default function App() {
           const cellB = newGrid[index];
           const itemA = cellA.item;
           const itemB = cellB.item;
-          newGrid[selectedCell] = { ...cellA, item: itemB };
-          newGrid[index] = { ...cellB, item: itemA };
+          newGrid[selectedCell] = gridCellAfterPlacingItem(cellA, itemB, cellB, genMax);
+          newGrid[index] = gridCellAfterPlacingItem(cellB, itemA, cellA, genMax);
 
           setState({ ...state, grid: newGrid });
           setSelectedCell(null);
@@ -622,24 +957,39 @@ export default function App() {
 
   const handleCompleteOrder = (orderId: string) => {
     if (!state || !progState || isSessionComplete) return;
-    const order = state.orders.find(o => o.id === orderId);
-    if (!order) return;
+    const order = state.orders.find((o) => o.id === orderId);
+    if (!order || orderIsFulfilled(order)) return;
 
-    const itemIndex = state.grid.findIndex((cell) => cell.item === order.requiredItemId);
+    const itemIndex = findFirstCellIndexForOrderDelivery(state.grid, order);
     if (itemIndex === -1) return;
 
+    const itemId = state.grid[itemIndex].item!;
     const newGrid = [...state.grid];
-    newGrid[itemIndex] = { ...newGrid[itemIndex], item: null };
+    newGrid[itemIndex] = { item: null, cellState: newGrid[itemIndex].cellState };
 
-    const newOrders = state.orders.filter(o => o.id !== orderId);
+    const prevDelivered = order.delivered[itemId] ?? 0;
+    const updatedOrder: Order = {
+      ...order,
+      delivered: { ...order.delivered, [itemId]: prevDelivered + 1 },
+    };
+
+    if (!orderIsFulfilled(updatedOrder)) {
+      setState({
+        ...state,
+        grid: newGrid,
+        orders: state.orders.map((o) => (o.id === orderId ? updatedOrder : o)),
+      });
+      sounds.select();
+      return;
+    }
+
+    const newOrders = state.orders.filter((o) => o.id !== orderId);
     newOrders.push(generateNewOrder(progState.level));
 
     const manager = new ProgressionManager(progState);
     const orderBonuses = manager.getActiveBonuses();
 
-    // income_bonus: бонус к монетам заказа. finalCoins = round(rewardCoins * (1 + income_bonus)), напр. 0.25 => +25%
     let finalCoins = Math.round(order.rewardCoins * (1 + orderBonuses.income_bonus));
-    // bonus_chance: после income_bonus — шанс удвоить монеты заказа (до addCoins)
     let orderCoinDoubled = false;
     if (Math.random() < orderBonuses.bonus_chance) {
       finalCoins *= 2;
@@ -648,23 +998,42 @@ export default function App() {
 
     const { leveledUp } = manager.addXp(order.rewardXp);
     manager.addCoins(finalCoins);
-    const newProg = manager.getState();
+    let afterOrder = manager.getState();
+
+    const { reconstruction: rNext, completed: reconDone } = tickReconstructionAfterOrderComplete(
+      progState.reconstruction
+    );
+    let finalProg = { ...afterOrder, reconstruction: rNext };
+    let anyLevelUp = leveledUp;
+    if (reconDone) {
+      const m2 = new ProgressionManager(finalProg);
+      m2.addCoins(reconDone.rewardCoins);
+      const xr = m2.addXp(reconDone.rewardXp);
+      anyLevelUp = anyLevelUp || xr.leveledUp;
+      const st = m2.getState();
+      const uz = [...st.unlockedZones];
+      for (const z of reconDone.unlockZones ?? []) {
+        if (!uz.includes(z)) uz.push(z);
+      }
+      finalProg = { ...st, unlockedZones: uz, reconstruction: rNext };
+      updateQuestProgress("coins", reconDone.rewardCoins);
+    }
 
     if (orderCoinDoubled) {
       setShowOrderCoinBonus(true);
       setTimeout(() => setShowOrderCoinBonus(false), 1500);
     }
 
-    if (leveledUp) {
+    if (anyLevelUp) {
       triggerLevelUp();
     }
 
-    setProgState(newProg);
+    setProgState(finalProg);
     setState({
       ...state,
       grid: newGrid,
       orders: newOrders,
-      energy: leveledUp ? state.maxEnergy : state.energy,
+      energy: anyLevelUp ? state.maxEnergy : state.energy,
     });
     setLastAction({ type: "order" });
     setOrdersCompleted((c) => c + 1);
@@ -679,6 +1048,47 @@ export default function App() {
       if (next >= SESSION_ORDER_GOAL) setIsSessionComplete(true);
       return next;
     });
+  };
+
+  const handleReconstructionDeliver = () => {
+    if (!state || !progState || isSessionComplete) return;
+    const stage = getCurrentReconstructionStage(progState.reconstruction);
+    if (!stage || stage.requirement.type !== "items") return;
+
+    const delivered = tryDeliverReconstructionItem(progState.reconstruction, state.grid);
+    if (!delivered) return;
+
+    let nextRecon = delivered.reconstruction;
+    const gridAfter = delivered.grid;
+    const complete = tryCompleteReconstructionItemsStage(nextRecon);
+    nextRecon = complete.reconstruction;
+    const reconDone = complete.completed;
+
+    let finalProg = { ...progState, reconstruction: nextRecon };
+    let anyLevelUp = false;
+    if (reconDone) {
+      const m = new ProgressionManager(finalProg);
+      m.addCoins(reconDone.rewardCoins);
+      const xr = m.addXp(reconDone.rewardXp);
+      anyLevelUp = xr.leveledUp;
+      const st = m.getState();
+      const uz = [...st.unlockedZones];
+      for (const z of reconDone.unlockZones ?? []) {
+        if (!uz.includes(z)) uz.push(z);
+      }
+      finalProg = { ...st, unlockedZones: uz, reconstruction: nextRecon };
+      updateQuestProgress("coins", reconDone.rewardCoins);
+    }
+
+    if (anyLevelUp) triggerLevelUp();
+
+    setProgState(finalProg);
+    setState({
+      ...state,
+      grid: gridAfter,
+      energy: anyLevelUp ? state.maxEnergy : state.energy,
+    });
+    sounds.select();
   };
 
   const handleStoryChoice = (nextBeatId: string | null) => {
@@ -699,10 +1109,27 @@ export default function App() {
     const { success, newState: newProg, error } = manager.purchaseUpgrade(upgradeId);
 
     if (success) {
-      const bonuses = manager.getActiveBonuses();
+      const bonuses = new ProgressionManager(newProg).getActiveBonuses();
+      const oldGenMax = getGeneratorMaxCharges(progState.purchasedUpgrades);
+      const newGenMax = getGeneratorMaxCharges(newProg.purchasedUpgrades);
+      let newGrid = state.grid;
+      if (newGenMax > oldGenMax) {
+        const delta = newGenMax - oldGenMax;
+        newGrid = state.grid.map((cell) => {
+          if (!cell.item) return cell;
+          const d = ALL_ITEMS[cell.item];
+          if (!d || !itemIsGenerator(d)) return cell;
+          const cur =
+            typeof cell.generatorCharges === "number"
+              ? cell.generatorCharges
+              : oldGenMax;
+          return { ...cell, generatorCharges: Math.min(newGenMax, cur + delta) };
+        });
+      }
       setProgState(newProg);
       setState({
         ...state,
+        grid: newGrid,
         maxEnergy: INITIAL_ENERGY + bonuses.energy_max,
       });
       updateQuestProgress("upgrade", 1);
@@ -788,6 +1215,27 @@ export default function App() {
     );
   };
 
+  /** Из главного меню: экран «Дом» (хаб), состояние игры не трогаем. */
+  const handleContinueFromMenu = useCallback(() => {
+    setCurrentScreen("hub");
+  }, []);
+
+  const handleNewGame = useCallback(() => {
+    if (!window.confirm("Ты уверен? Весь прогресс будет сброшен.")) return;
+    setSaveLoadedFromDisk(false);
+    resetGame();
+    setCurrentScreen("hub");
+  }, [devMode]);
+
+  /** С экрана «Дом» в миниигру; туториал при первом входе на поле. */
+  const handlePlayFromHub = useCallback(() => {
+    setCurrentScreen("game");
+    if (state?.isFirstLaunch) {
+      setShowTutorial(true);
+      setState((s) => (s ? { ...s, isFirstLaunch: false } : s));
+    }
+  }, [state?.isFirstLaunch]);
+
   if (!state || !progState) {
     return (
       <div className="h-[100dvh] w-full flex flex-col items-center justify-center bg-[#F8F9FA] p-4 text-center">
@@ -807,42 +1255,72 @@ export default function App() {
   const manager = new ProgressionManager(progState);
   const xpToNextLevel = manager.getXpToNextLevel(progState.level);
   const progress = (progState.xp / xpToNextLevel) * 100;
-  const spawnBonuses = manager.getActiveBonuses();
-  // Та же формула, что в handleSpawn: итоговая стоимость «СОЗДАТЬ» с учётом gen_speed
-  const spawnEnergyCost = Math.max(1, Math.round(SPAWN_COST * (1 - spawnBonuses.gen_speed)));
 
   const questBanner = getHomeQuestSummary(dailyQuests);
 
-  const goPlay = () => {
-    setCurrentScreen("game");
-    if (state.isFirstLaunch) {
-      setShowTutorial(true);
-      setState((s) => (s ? { ...s, isFirstLaunch: false } : s));
-    }
-  };
+  const hasSave =
+    saveLoadedFromDisk ||
+    ordersCompleted > 0 ||
+    progState.coins > 0 ||
+    progState.level > 1 ||
+    progState.xp > 0 ||
+    !state.isFirstLaunch;
 
   return (
     <>
-      {currentScreen === "home" && (
+      {currentScreen === "menu" && (
         <div className={screenEntering ? "screen-entering h-[100dvh]" : "h-[100dvh]"}>
-          <HomeScreen
-          energy={state.energy}
-          maxEnergy={state.maxEnergy}
-          level={progState.level}
-          coins={progState.coins}
-          xpProgressPercent={progress}
-          unlockedZones={progState.unlockedZones}
-          onNavigateRoom={(zone) => {
-            setActiveZone(zone);
-            setCurrentScreen("room");
-          }}
-          onPlay={goPlay}
-          dailyQuestCompleted={questBanner.completed}
-          dailyQuestTotal={questBanner.total}
-          dailyUnclaimedCount={questBanner.unclaimedCount}
-          onOpenDaily={() => setCurrentScreen("daily")}
-          onResetGame={handleFullReset}
-        />
+          <MainMenuScreen
+            hasSave={hasSave}
+            onContinue={handleContinueFromMenu}
+            onNewGame={handleNewGame}
+            onOpenSettings={() => setSettingsOpen(true)}
+            devMode={devMode}
+            onFullReset={handleFullReset}
+          />
+          <SettingsModal
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            devMode={devMode}
+            onToggleDevMode={handleToggleDevMode}
+            soundOn={soundOn}
+            onSoundOnChange={(on) => {
+              setSoundOn(on);
+              setSoundMuted(!on);
+            }}
+          />
+        </div>
+      )}
+      {currentScreen === "hub" && (
+        <div className={screenEntering ? "screen-entering h-[100dvh]" : "h-[100dvh]"}>
+          <CafeHubScreen
+            energy={state.energy}
+            maxEnergy={state.maxEnergy}
+            level={progState.level}
+            coins={progState.coins}
+            xpProgressPercent={progress}
+            unlockedZones={progState.unlockedZones}
+            onNavigateRoom={(zone) => {
+              setActiveZone(zone);
+              setCurrentScreen("room");
+            }}
+            dailyQuestCompleted={questBanner.completed}
+            dailyQuestTotal={questBanner.total}
+            dailyUnclaimedCount={questBanner.unclaimedCount}
+            onOpenDaily={() => setCurrentScreen("daily")}
+            onOpenCoinShop={() => setCoinShopOpen(true)}
+            reconstruction={progState.reconstruction}
+            onBackToMenu={handleBackToMainMenu}
+            onPlay={handlePlayFromHub}
+          />
+          <CoinShopModal
+            open={coinShopOpen}
+            onClose={() => setCoinShopOpen(false)}
+            coins={progState.coins}
+            level={progState.level}
+            purchasedUpgrades={progState.purchasedUpgrades}
+            onPurchaseUpgrade={handlePurchaseUpgrade}
+          />
         </div>
       )}
       {currentScreen === "daily" ? (
@@ -850,7 +1328,7 @@ export default function App() {
           <DailyScreen
           dailyQuests={dailyQuests}
           streakDay={dailyBonusDay}
-          onBack={() => setCurrentScreen("home")}
+          onBack={() => setCurrentScreen("hub")}
           onClaimDailyBonus={handleClaimDaily}
           onClaimDailyQuest={handleClaimDailyQuest}
           onClaimWeekly={handleClaimWeekly}
@@ -862,7 +1340,7 @@ export default function App() {
           <RoomScreen
           activeZone={activeZone}
           progState={progState}
-          onBack={() => setCurrentScreen("home")}
+          onBack={() => setCurrentScreen("hub")}
           onPurchaseUpgrade={handlePurchaseUpgrade}
           purchaseSparkleNonce={purchaseSparkleNonce}
         />
@@ -874,15 +1352,14 @@ export default function App() {
           state={state}
           progState={progState}
           showOrderCoinBonus={showOrderCoinBonus}
-          spawnEnergyCost={spawnEnergyCost}
-          showFreeSpawnLabel={showFreeSpawnLabel}
           devMode={devMode}
           onToggleDevMode={handleToggleDevMode}
           xpProgressPercent={progress}
           selectedCell={selectedCell}
-          onGoHome={() => setCurrentScreen("home")}
-          onSpawn={handleSpawn}
-          onFreeSpawnAttempt={handleFreeSpawnAttempt}
+          onGoHome={() => {
+            setShowTutorial(false);
+            setCurrentScreen("hub");
+          }}
           onCellClick={handleCellClick}
           paidCleanMode={paidCleanMode}
           onTogglePaidCleanMode={() => setPaidCleanMode((v) => !v)}
@@ -890,6 +1367,7 @@ export default function App() {
           onOpenTutorial={() => setShowTutorial(true)}
           mergePopIndex={cellMergePopIndex}
           cellUnlockedFlashIndices={cellUnlockedFlashIndices}
+          cellDirtyLootFlashIndices={cellDirtyLootFlashIndices}
           cellShakePair={cellShakePair}
           coinFly={coinFly}
           gridWidth={GRID_WIDTH}
@@ -903,11 +1381,12 @@ export default function App() {
           onShuffleGrid={handleShuffleGrid}
           onNoMovesNewSession={handleSessionNewGame}
           onNoMovesExitHome={handleNoMovesExitHome}
+          onReconstructionDeliver={handleReconstructionDeliver}
         />
         </div>
       )}
 
-      {currentBeat ? (
+      {currentScreen === "game" && currentBeat ? (
         <DialogModal beat={currentBeat} onChoice={handleStoryChoice} />
       ) : null}
 
@@ -926,9 +1405,9 @@ export default function App() {
         <OnboardingOverlay onComplete={handleOnboardingComplete} />
       ) : null}
 
-      {/* Tutorial Overlay */}
+      {/* Туториал только в игре, не над главным меню */}
       <AnimatePresence>
-        {showTutorial && (
+        {currentScreen === "game" && showTutorial && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -947,7 +1426,7 @@ export default function App() {
               <div className="space-y-3 text-gray-600 text-xs mb-6 text-left">
                 <div className="flex gap-2">
                   <div className="w-5 h-5 bg-blue-500 text-white rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold">1</div>
-                  <p>Нажми <b>СОЗДАТЬ</b>, чтобы получить предмет. Цена в энергии — число на кнопке.</p>
+                  <p>Нажми на <b>корзину 🧺</b> — рядом появится предмет 1 уровня, пока на клетке есть заряды.</p>
                 </div>
                 <div className="flex gap-2">
                   <div className="w-5 h-5 bg-blue-500 text-white rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold">2</div>
