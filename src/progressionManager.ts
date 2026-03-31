@@ -1,5 +1,13 @@
 import { LEVELS, UPGRADES } from "./progressionData";
-import { ProgressionState, Upgrade, LevelConfig } from "./types";
+import { ProgressionState } from "./types";
+
+/** Суммарные эффекты купленных апгрейдов. income_bonus / gen_speed / bonus_chance — доли (0 = нет эффекта). */
+export interface ActiveBonuses {
+  energy_max: number;
+  gen_speed: number;
+  income_bonus: number;
+  bonus_chance: number;
+}
 
 export class ProgressionManager {
   private state: ProgressionState;
@@ -44,6 +52,15 @@ export class ProgressionManager {
     return { leveledUp, newState: this.state };
   }
 
+  /** Начисление монет (заказы, квесты и т.д. — всегда через ProgressionManager). */
+  public addCoins(amount: number): ProgressionState {
+    this.state = {
+      ...this.state,
+      coins: this.state.coins + amount,
+    };
+    return this.state;
+  }
+
   // Покупка улучшения
   public purchaseUpgrade(upgradeId: string): { success: boolean; newState: ProgressionState; error?: string } {
     const upgrade = UPGRADES.find(u => u.id === upgradeId);
@@ -62,17 +79,17 @@ export class ProgressionManager {
     return { success: true, newState: this.state };
   }
 
-  // Получение активных бонусов от улучшений
-  public getActiveBonuses() {
-    const bonuses = {
+  /** Суммирование effectValue по типам. Дефолты: income_bonus/gen_speed/bonus_chance = 0. */
+  public getActiveBonuses(): ActiveBonuses {
+    const bonuses: ActiveBonuses = {
       energy_max: 0,
-      gen_speed: 1.0,
-      income_bonus: 1.0,
-      bonus_chance: 0
+      gen_speed: 0,
+      income_bonus: 0,
+      bonus_chance: 0,
     };
 
-    this.state.purchasedUpgrades.forEach(id => {
-      const upgrade = UPGRADES.find(u => u.id === id);
+    this.state.purchasedUpgrades.forEach((id) => {
+      const upgrade = UPGRADES.find((u) => u.id === id);
       if (upgrade) {
         if (upgrade.effectType === "energy_max") bonuses.energy_max += upgrade.effectValue;
         if (upgrade.effectType === "gen_speed") bonuses.gen_speed += upgrade.effectValue;

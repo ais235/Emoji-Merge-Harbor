@@ -1,5 +1,30 @@
 export type ItemId = string;
 
+/** Ссылка на предмет в ячейке сетки (совпадает с id из ALL_ITEMS). */
+export type Item = ItemId;
+
+export type CellState = "normal" | "dirty_1" | "dirty_2";
+
+/** Временно: любая не-normal клетка ведёт себя как бывший blocked. */
+export function isObstacleCellState(cellState: CellState): boolean {
+  return cellState !== "normal";
+}
+
+export interface GridCell {
+  item: Item | null;
+  cellState: CellState;
+}
+
+/** Навигация без роутера */
+export type AppScreen = "home" | "room" | "game" | "daily";
+
+export type ActiveZone = "hall" | "kitchen" | "terrace" | "secret";
+
+/** Соответствие id экрана комнаты и поля Upgrade.zone / unlockedZones в прогрессии */
+export function progressZoneId(z: ActiveZone): "hall" | "kitchen" | "terrace" | "secret_room" {
+  return z === "secret" ? "secret_room" : z;
+}
+
 export interface ItemDefinition {
   id: ItemId;
   name: string;
@@ -22,6 +47,11 @@ export interface Order {
   rewardCoins: number;
   rewardXp: number;
 }
+
+/** Короткая анимация «+N 🍪» у заказа или у клетки слияния (награда за очистку). */
+export type CoinFlyState =
+  | { source: "order"; orderId: string; amount: number }
+  | { source: "clean"; cellIndex: number; amount: number };
 
 export interface Upgrade {
   id: string;
@@ -50,13 +80,11 @@ export interface ProgressionState {
   purchasedUpgrades: string[];
 }
 
+/** Игровая сцена (поле, энергия, заказы). coins / level / xp — только в ProgressionState. */
 export interface GameState {
-  grid: (ItemId | null)[];
+  grid: GridCell[];
   energy: number;
   maxEnergy: number;
-  coins: number;
-  xp: number;
-  level: number;
   orders: Order[];
   isFirstLaunch: boolean;
 }
