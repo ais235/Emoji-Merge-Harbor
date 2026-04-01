@@ -3,6 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+const SOUND_STORAGE_KEY = "emoji_merge_harbor_sound_on";
+
+let soundMuted = false;
+
+export function initSoundPreferenceFromStorage(): void {
+  try {
+    soundMuted = localStorage.getItem(SOUND_STORAGE_KEY) === "0";
+  } catch {
+    soundMuted = false;
+  }
+}
+
+export function setSoundMuted(muted: boolean): void {
+  soundMuted = muted;
+  try {
+    localStorage.setItem(SOUND_STORAGE_KEY, muted ? "0" : "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+export function isSoundMuted(): boolean {
+  return soundMuted;
+}
+
 let audioCtx: AudioContext | null = null;
 
 export function initAudio(): void {
@@ -22,6 +47,7 @@ function ensureCtx(): AudioContext | null {
 
 export const sounds = {
   merge(): void {
+    if (soundMuted) return;
     const c = ensureCtx();
     if (!c) return;
     const t0 = c.currentTime;
@@ -57,6 +83,7 @@ export const sounds = {
   },
 
   orderComplete(): void {
+    if (soundMuted) return;
     const c = ensureCtx();
     if (!c) return;
     const freqs = [523, 659, 784];
@@ -80,6 +107,7 @@ export const sounds = {
   },
 
   purchase(): void {
+    if (soundMuted) return;
     const c = ensureCtx();
     if (!c) return;
     const t0 = c.currentTime;
@@ -98,6 +126,7 @@ export const sounds = {
   },
 
   levelUp(): void {
+    if (soundMuted) return;
     const c = ensureCtx();
     if (!c) return;
     const t0 = c.currentTime;

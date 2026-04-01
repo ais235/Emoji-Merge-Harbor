@@ -8,19 +8,8 @@ import { Zap, Coins, Star } from "lucide-react";
 import { motion } from "motion/react";
 import type { ActiveZone, ReconstructionState } from "../types";
 import { progressZoneId } from "../types";
+import { HUB_ZONES } from "../progressionData";
 import ReconstructionPanel from "../components/ReconstructionPanel";
-
-const ZONES: {
-  id: ActiveZone;
-  emoji: string;
-  name: string;
-  unlockLevel: number;
-}[] = [
-  { id: "hall", emoji: "☕", name: "Основной зал", unlockLevel: 1 },
-  { id: "kitchen", emoji: "🍳", name: "Кухня", unlockLevel: 5 },
-  { id: "terrace", emoji: "🌿", name: "Терраса", unlockLevel: 10 },
-  { id: "secret", emoji: "🔮", name: "Тайная комната", unlockLevel: 15 },
-];
 
 export interface CafeHubScreenProps {
   energy: number;
@@ -35,6 +24,7 @@ export interface CafeHubScreenProps {
   dailyUnclaimedCount: number;
   onOpenDaily: () => void;
   onOpenCoinShop?: () => void;
+  onOpenCollection?: () => void;
   reconstruction: ReconstructionState;
   onBackToMenu: () => void;
   onPlay: () => void;
@@ -53,6 +43,7 @@ export default function CafeHubScreen({
   dailyUnclaimedCount,
   onOpenDaily,
   onOpenCoinShop,
+  onOpenCollection,
   reconstruction,
   onBackToMenu,
   onPlay,
@@ -157,9 +148,30 @@ export default function CafeHubScreen({
           </button>
         ) : null}
 
+        {onOpenCollection ? (
+          <button
+            type="button"
+            onClick={onOpenCollection}
+            className="mb-2 w-full rounded-xl border border-gray-100 bg-white p-2.5 text-left shadow-sm active:bg-gray-50"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="text-xl" aria-hidden>
+                  📚
+                </span>
+                <div>
+                  <div className="text-xs font-bold text-gray-900">Коллекция</div>
+                  <div className="text-[10px] text-gray-500">Предметы и награды</div>
+                </div>
+              </div>
+              <span className="text-gray-400">→</span>
+            </div>
+          </button>
+        ) : null}
+
         <p className="mb-1 text-center text-[10px] text-gray-400">Комнаты</p>
         <div className="space-y-1.5 pb-[env(safe-area-inset-bottom,12px)]">
-          {ZONES.map((zone) => {
+          {HUB_ZONES.map((zone) => {
             const key = progressZoneId(zone.id);
             const isOpen = unlockedZones.includes(key);
             return (
@@ -174,7 +186,7 @@ export default function CafeHubScreen({
                   {zone.emoji}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs font-bold text-gray-900">{zone.name}</div>
+                  <div className="text-xs font-bold text-gray-900">{zone.displayName}</div>
                   <div className="text-[9px] text-gray-500">
                     {isOpen ? (
                       <span className="text-green-600">Открыта</span>

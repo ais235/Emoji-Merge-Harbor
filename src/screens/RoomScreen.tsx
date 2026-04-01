@@ -4,17 +4,14 @@
  */
 
 import React, { useEffect, useRef, useState } from "react";
-import { UPGRADES } from "../progressionData";
+import { HUB_ZONES, UPGRADES } from "../progressionData";
 import type { ActiveZone, ProgressionState } from "../types";
 import { progressZoneId } from "../types";
 import { getRoomVisual, type RoomVisual } from "../story/roomData";
 
-const ZONE_TITLES: Record<ActiveZone, string> = {
-  hall: "Основной зал",
-  kitchen: "Кухня",
-  terrace: "Терраса",
-  secret: "Тайная комната",
-};
+function zoneTitle(z: ActiveZone): string {
+  return HUB_ZONES.find((h) => h.id === z)?.displayName ?? "Комната";
+}
 
 function RoomCanvas({
   roomVisual,
@@ -125,7 +122,9 @@ function RoomCanvas({
               {layer.emoji}
             </span>
             <span
-              className="mt-0.5 max-w-[72px] text-center text-[10px] leading-tight text-[#888]"
+              className={`mt-0.5 max-w-[72px] text-center text-[10px] leading-tight ${
+                roomVisual.zoneId === "lounge" ? "text-amber-200/85" : "text-[#888]"
+              }`}
               style={{ fontSize: 10 }}
             >
               {layer.label}
@@ -163,6 +162,8 @@ export interface RoomScreenProps {
   onBack: () => void;
   onPurchaseUpgrade: (upgradeId: string) => void;
   purchaseSparkleNonce: number;
+  /** Реплика после покупки в этой комнате (сбрасывается из App). */
+  purchaseToast?: string | null;
 }
 
 export default function RoomScreen({
@@ -171,10 +172,14 @@ export default function RoomScreen({
   onBack,
   onPurchaseUpgrade,
   purchaseSparkleNonce,
+  purchaseToast,
 }: RoomScreenProps) {
   const pid = progressZoneId(activeZone);
   const inZone = UPGRADES.filter((u) => u.zone === pid);
   const availableHere = inZone.filter((u) => !progState.purchasedUpgrades.includes(u.id));
+  const purchasedHere = inZone
+    .filter((u) => progState.purchasedUpgrades.includes(u.id))
+    .sort((a, b) => a.requiredLevel - b.requiredLevel || a.name.localeCompare(b.name));
 
   const roomVisual = getRoomVisual(activeZone);
   const layers = roomVisual?.layers ?? [];
@@ -195,9 +200,16 @@ export default function RoomScreen({
         </button>
       </div>
 
-      <h1 className="mb-3 text-xl font-black text-gray-900">
-        {ZONE_TITLES[activeZone]}
-      </h1>
+      <h1 className="mb-2 text-xl font-black text-gray-900">{zoneTitle(activeZone)}</h1>
+
+      {purchaseToast ? (
+        <p
+          className="mb-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] font-medium leading-snug text-amber-950 shadow-sm"
+          role="status"
+        >
+          {purchaseToast}
+        </p>
+      ) : null}
 
       {totalLayers > 0 ? (
         <>
@@ -219,9 +231,27 @@ export default function RoomScreen({
       )}
 
       <div className="no-scrollbar flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-2">
+        {purchasedHere.length > 0 ? (
+          <section>
+            <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
+              Уже в комнате
+            </h2>
+            <ul className="flex flex-wrap gap-1.5">
+              {purchasedHere.map((u) => (
+                <li
+                  key={u.id}
+                  className="rounded-lg border border-green-100 bg-green-50/90 px-2 py-1 text-[10px] font-semibold text-green-900"
+                >
+                  ✓ {u.name}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
         <section>
           <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
-            Доступно
+            Купить
           </h2>
           {availableHere.length === 0 ? (
             <p className="text-xs text-gray-400">Все улучшения этой зоны уже куплены.</p>
@@ -230,7 +260,8 @@ export default function RoomScreen({
               {availableHere.map((u) => {
                 const isUnlocked = progState.level >= u.requiredLevel;
                 const canAfford = progState.coins >= u.cost;
-                const zoneUnlocked = progState.unlockedZones.includes(u.zone);
+                const zoneUnlocked =
+                  u.zone === "meta" || progState.unlockedZones.includes(u.zone);
                 const canBuy = isUnlocked && canAfford && zoneUnlocked;
 
                 return (

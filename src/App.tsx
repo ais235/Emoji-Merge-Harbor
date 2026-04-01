@@ -35,7 +35,16 @@ import MainMenuScreen from "./screens/MainMenuScreen";
 import CafeHubScreen from "./screens/CafeHubScreen";
 import RoomScreen from "./screens/RoomScreen";
 import GameScreen from "./screens/GameScreen";
+import CollectionScreen from "./screens/CollectionScreen";
 import { ProgressionManager, EconomyManager, getGeneratorMaxCharges } from "./progressionManager";
+import { onUpgradePurchased } from "./upgradeDialogs";
+import { mergeUnlockedZonesForLevel } from "./progressionData";
+import {
+  formatCollectionToast,
+  hydrateCollectionFromGrid,
+  normalizeCollectionFields,
+  registerCollectiblesBulk,
+} from "./collection";
 import CoinShopModal from "./components/CoinShopModal";
 import SettingsModal from "./components/SettingsModal";
 import DialogModal from "./components/DialogModal";
@@ -385,7 +394,12 @@ export default function App() {
   /** Режим: клик по грязной клетке тратит монеты на очистку (без Shift). */
   const [paidCleanMode, setPaidCleanMode] = useState(false);
   const [purchaseSparkleNonce, setPurchaseSparkleNonce] = useState(0);
+  const [roomPurchaseToast, setRoomPurchaseToast] = useState<string | null>(null);
+  const purchaseToastClearRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const currentScreenRef = useRef<AppScreen>("menu");
   const [coinShopOpen, setCoinShopOpen] = useState(false);
+  const [gameCollectionToast, setGameCollectionToast] = useState<string | null>(null);
+  const collectionToastTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** Была успешная загрузка из STORAGE_KEY при старте приложения. */
   const [saveLoadedFromDisk, setSaveLoadedFromDisk] = useState(false);
@@ -401,6 +415,19 @@ export default function App() {
       setShowLevelUp(true);
       window.setTimeout(() => setShowLevelUp(false), 2000);
     }, 500);
+  }, []);
+
+  const scheduleGameCollectionToast = useCallback((text: string | null) => {
+    if (!text) return;
+    if (collectionToastTimerRef.current) {
+      window.clearTimeout(collectionToastTimerRef.current);
+      collectionToastTimerRef.current = null;
+    }
+    setGameCollectionToast(text);
+    collectionToastTimerRef.current = window.setTimeout(() => {
+      setGameCollectionToast(null);
+      collectionToastTimerRef.current = null;
+    }, 5200);
   }, []);
 
   const handleToggleDevMode = useCallback(() => {
@@ -508,6 +535,8 @@ export default function App() {
       unlockedZones: ["hall"],
       purchasedUpgrades: [],
       reconstruction: defaultReconstructionState(),
+      collectedItems: {},
+      collectionChainRewardsClaimed: {},
     };
     const initialGameState: GameState = {
       grid: buildFreshPlayGrid(),
@@ -564,14 +593,28 @@ export default function App() {
             (parsed as { gameState: unknown }).gameState
           )!;
           setSaveLoadedFromDisk(true);
-          setState(hydrated);
           const rawProg = (parsed as { progState: ProgressionState }).progState;
-          setProgState({
+          const recon = normalizeReconstructionState(rawProg.reconstruction as unknown);
+          const baseProg = normalizeCollectionFields({
             ...rawProg,
-            reconstruction: normalizeReconstructionState(
-              rawProg.reconstruction as unknown
+            reconstruction: recon,
+            unlockedZones: mergeUnlockedZonesForLevel(
+              rawProg.level,
+              Array.isArray(rawProg.unlockedZones) ? rawProg.unlockedZones : ["hall"]
             ),
           });
+          const { nextProg, energyFromChainRewards } = hydrateCollectionFromGrid(
+            hydrated.grid,
+            baseProg
+          );
+          setState({
+            ...hydrated,
+            energy: Math.min(
+              hydrated.maxEnergy,
+              hydrated.energy + energyFromChainRewards
+            ),
+          });
+          setProgState(nextProg);
           setOrdersCompleted(
             typeof (parsed as { ordersCompleted?: unknown }).ordersCompleted === "number"
               ? (parsed as { ordersCompleted: number }).ordersCompleted
@@ -754,9 +797,10 @@ export default function App() {
 
       const manager = new ProgressionManager(progState);
       manager.addCoins(-cost);
-      setProgState(manager.getState());
+      let nextProg = manager.getState();
 
       const newGrid = [...state.grid];
+      let energyFromCollection = 0;
       if (cell.cellState === "dirty_2") {
         newGrid[index] = { ...newGrid[index], cellState: "dirty_1" };
       } else {
@@ -772,9 +816,23 @@ export default function App() {
           setCellDirtyLootFlashIndices([lootAt]);
           window.setTimeout(() => setCellDirtyLootFlashIndices([]), 480);
           sounds.select();
+          const lid = newGrid[lootAt].item;
+          if (lid) {
+            const bulk = registerCollectiblesBulk(nextProg, [lid]);
+            nextProg = bulk.nextProg;
+            energyFromCollection = bulk.totalEnergyFromChains;
+            scheduleGameCollectionToast(
+              formatCollectionToast(bulk.firstStoryText, bulk.lastChainCompletion)
+            );
+          }
         }
       }
-      setState({ ...state, grid: newGrid });
+      setProgState(nextProg);
+      setState({
+        ...state,
+        grid: newGrid,
+        energy: Math.min(state.maxEnergy, state.energy + energyFromCollection),
+      });
       setSelectedCell(null);
       setCellUnlockedFlashIndices([index]);
       window.setTimeout(() => setCellUnlockedFlashIndices([]), 300);
@@ -836,7 +894,19 @@ export default function App() {
             item: spawnItemId,
             generatorCharges: undefined,
           };
-          setState({ ...state, grid: newGrid, energy: state.energy - 1 });
+          const bulk = registerCollectiblesBulk(progState, [spawnItemId]);
+          scheduleGameCollectionToast(
+            formatCollectionToast(bulk.firstStoryText, bulk.lastChainCompletion)
+          );
+          setProgState(bulk.nextProg);
+          setState({
+            ...state,
+            grid: newGrid,
+            energy: Math.min(
+              state.maxEnergy,
+              state.energy - 1 + bulk.totalEnergyFromChains
+            ),
+          });
           setLastAction({ type: "spawn", index: spawnIdx });
           sounds.select();
           return;
@@ -898,16 +968,26 @@ export default function App() {
               console.log("[merge] dirty clean reward:", cleaningReward, "coins");
             }
             const newProg = manager.getState();
+            const lootIds = dirtyLootSpawnCells
+              .map((i) => newGrid[i].item)
+              .filter((x): x is string => x != null);
+            const bulk = registerCollectiblesBulk(newProg, [nextItem.id, ...lootIds]);
+            scheduleGameCollectionToast(
+              formatCollectionToast(bulk.firstStoryText, bulk.lastChainCompletion)
+            );
 
             if (leveledUp) {
               triggerLevelUp();
             }
 
-            setProgState(newProg);
+            setProgState(bulk.nextProg);
             setState({
               ...state,
               grid: newGrid,
-              energy: leveledUp ? state.maxEnergy : state.energy,
+              energy: Math.min(
+                state.maxEnergy,
+                (leveledUp ? state.maxEnergy : state.energy) + bulk.totalEnergyFromChains
+              ),
             });
             setSelectedCell(null);
             setLastAction({ type: "merge", index });
@@ -1131,6 +1211,17 @@ export default function App() {
       updateQuestProgress("upgrade", 1);
       sounds.purchase();
       setPurchaseSparkleNonce((n) => n + 1);
+      if (currentScreenRef.current === "room") {
+        if (purchaseToastClearRef.current) {
+          window.clearTimeout(purchaseToastClearRef.current);
+          purchaseToastClearRef.current = null;
+        }
+        setRoomPurchaseToast(onUpgradePurchased(upgradeId));
+        purchaseToastClearRef.current = window.setTimeout(() => {
+          setRoomPurchaseToast(null);
+          purchaseToastClearRef.current = null;
+        }, 4500);
+      }
     } else {
       alert(error);
     }
@@ -1252,6 +1343,8 @@ export default function App() {
   const xpToNextLevel = manager.getXpToNextLevel(progState.level);
   const progress = (progState.xp / xpToNextLevel) * 100;
 
+  currentScreenRef.current = currentScreen;
+
   const questBanner = getHomeQuestSummary(dailyQuests);
 
   const hasSave =
@@ -1297,6 +1390,11 @@ export default function App() {
             xpProgressPercent={progress}
             unlockedZones={progState.unlockedZones}
             onNavigateRoom={(zone) => {
+              setRoomPurchaseToast(null);
+              if (purchaseToastClearRef.current) {
+                window.clearTimeout(purchaseToastClearRef.current);
+                purchaseToastClearRef.current = null;
+              }
               setActiveZone(zone);
               setCurrentScreen("room");
             }}
@@ -1305,6 +1403,7 @@ export default function App() {
             dailyUnclaimedCount={questBanner.unclaimedCount}
             onOpenDaily={() => setCurrentScreen("daily")}
             onOpenCoinShop={() => setCoinShopOpen(true)}
+            onOpenCollection={() => setCurrentScreen("collection")}
             reconstruction={progState.reconstruction}
             onBackToMenu={handleBackToMainMenu}
             onPlay={handlePlayFromHub}
@@ -1319,6 +1418,11 @@ export default function App() {
           />
         </div>
       )}
+      {currentScreen === "collection" ? (
+        <div className={screenEntering ? "screen-entering h-[100dvh]" : "h-[100dvh]"}>
+          <CollectionScreen progState={progState} onBack={() => setCurrentScreen("hub")} />
+        </div>
+      ) : null}
       {currentScreen === "daily" ? (
         <div className={screenEntering ? "screen-entering h-[100dvh]" : "h-[100dvh]"}>
           <DailyScreen
@@ -1336,9 +1440,17 @@ export default function App() {
           <RoomScreen
           activeZone={activeZone}
           progState={progState}
-          onBack={() => setCurrentScreen("hub")}
+          onBack={() => {
+            setRoomPurchaseToast(null);
+            if (purchaseToastClearRef.current) {
+              window.clearTimeout(purchaseToastClearRef.current);
+              purchaseToastClearRef.current = null;
+            }
+            setCurrentScreen("hub");
+          }}
           onPurchaseUpgrade={handlePurchaseUpgrade}
           purchaseSparkleNonce={purchaseSparkleNonce}
+          purchaseToast={roomPurchaseToast}
         />
         </div>
       )}
@@ -1378,6 +1490,7 @@ export default function App() {
           onNoMovesNewSession={handleSessionNewGame}
           onNoMovesExitHome={handleNoMovesExitHome}
           onReconstructionDeliver={handleReconstructionDeliver}
+          collectionToast={gameCollectionToast}
         />
         </div>
       )}

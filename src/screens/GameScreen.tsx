@@ -73,6 +73,8 @@ export interface GameScreenProps {
   onNoMovesExitHome: () => void;
   /** Сдача предмета в этап «Реконструкция» (если этап требует предметы). */
   onReconstructionDeliver: () => void;
+  /** Тост при первом открытии предмета в коллекции / полной цепочке. */
+  collectionToast?: string | null;
 }
 
 export default function GameScreen({
@@ -106,6 +108,7 @@ export default function GameScreen({
   onNoMovesNewSession,
   onNoMovesExitHome,
   onReconstructionDeliver,
+  collectionToast,
 }: GameScreenProps) {
   const reconStage = getCurrentReconstructionStage(progState.reconstruction);
   const reconBarActive =
@@ -173,6 +176,15 @@ export default function GameScreen({
           </div>
         </div>
       </div>
+
+      {collectionToast ? (
+        <div
+          className="mb-1.5 w-full flex-shrink-0 rounded-xl border border-violet-100 bg-violet-50 px-2.5 py-2 text-[10px] font-medium leading-snug text-violet-950 shadow-sm whitespace-pre-line"
+          role="status"
+        >
+          {collectionToast}
+        </div>
+      ) : null}
 
       <div className="mb-1 w-full flex-shrink-0 flex items-center justify-between gap-2 px-0.5">
         <button

@@ -20,7 +20,7 @@ const STEPS: Record<
     arrow: "up",
   },
   3: {
-    hint: "Кнопка СОЗДАТЬ добавляет новый предмет. Стоит энергию — она восстанавливается!",
+    hint: "Корзина 🧺 по клику даёт предмет рядом, пока есть заряды (число на клетке). Энергия восстанавливается со временем!",
     cta: "Начать играть!",
     arrow: "down",
   },
@@ -64,7 +64,7 @@ export default function OnboardingOverlay({ onComplete }: OnboardingOverlayProps
           <span className="mt-2 max-w-[280px] text-center text-xs font-bold uppercase tracking-wide text-white/90">
             {step === 1 && "Слияние"}
             {step === 2 && "Заказы"}
-            {step === 3 && "Создать"}
+            {step === 3 && "Корзина"}
           </span>
         </div>
 
