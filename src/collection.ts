@@ -1,11 +1,20 @@
 import type { GridCell, ItemId, ProgressionState } from "./types";
 import { ALL_ITEMS, ITEM_CHAINS, KEY_CHAIN_ID } from "./types";
 
-/** Награда за полный сбор цепочки (из `ITEM_CHAINS`). */
+/** Награда за полный сбор цепочки (из `ITEM_CHAINS`). Ориентир — порядок цен мебели в комнате. */
 export const CHAIN_COMPLETE_REWARDS: Record<string, { coins: number; energy: number }> = {
   fruit: { coins: 140, energy: 10 },
   sweets: { coins: 140, energy: 10 },
   [KEY_CHAIN_ID]: { coins: 90, energy: 6 },
+  hall_tea: { coins: 180, energy: 10 },
+  kitchen_meal: { coins: 260, energy: 12 },
+  bedroom_cozy: { coins: 340, energy: 14 },
+  bathroom_fresh: { coins: 420, energy: 14 },
+  terrace_plants: { coins: 620, energy: 16 },
+  office_work: { coins: 780, energy: 18 },
+  lounge_drinks: { coins: 920, energy: 20 },
+  secret_mystic: { coins: 1200, energy: 22 },
+  garden_harvest: { coins: 1500, energy: 24 },
 };
 
 /** Предметы из цепочек коллекции (фрукты, сладости, ключи — не генераторы/ресурсы). */

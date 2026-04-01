@@ -1,9 +1,8 @@
-import type { GridCell } from "../types";
+import type { GridCell, ItemChain } from "../types";
 import {
   COIN_PICKUP_ITEM_ID,
   ENERGY_PICKUP_ITEM_ID,
   DIRTY_LOOT_RESOURCE_CHANCE,
-  chainsEligibleForLootAndOrders,
 } from "../types";
 import { getNeighborIndices } from "./grid";
 
@@ -37,7 +36,8 @@ export function trySpawnLootOnDirtyOneClear(
   clearedIndex: number,
   width: number,
   height: number,
-  cleanDropBonus = 0
+  cleanDropBonus = 0,
+  lootChains?: ItemChain[]
 ): number | null {
   const p = Math.min(1, DIRTY_CLEAN_DROP_CHANCE + Math.max(0, cleanDropBonus));
   if (Math.random() >= p) return null;
@@ -49,7 +49,7 @@ export function trySpawnLootOnDirtyOneClear(
   if (Math.random() < DIRTY_LOOT_RESOURCE_CHANCE) {
     itemId = Math.random() < 0.5 ? COIN_PICKUP_ITEM_ID : ENERGY_PICKUP_ITEM_ID;
   } else {
-    const chainList = chainsEligibleForLootAndOrders();
+    const chainList = lootChains?.filter((c) => c.items.length > 0) ?? [];
     if (chainList.length === 0) return null;
     const chain = chainList[Math.floor(Math.random() * chainList.length)];
     const first = chain.items[0];

@@ -1,3 +1,10 @@
+import {
+  ROOM_GENERATOR_DEFS,
+  ROOM_MERGE_CHAINS,
+  ZONE_TO_GENERATOR_ID,
+  ZONE_TO_MERGE_CHAIN_ID,
+} from "./roomMergeCatalog";
+
 export type ItemId = string;
 
 export type ItemRarity = "common" | "rare" | "epic";
@@ -62,6 +69,22 @@ export type ActiveZone =
   | "office"
   | "lounge"
   | "garden";
+
+export const ALL_ACTIVE_ZONES: ActiveZone[] = [
+  "hall",
+  "kitchen",
+  "bedroom",
+  "bathroom",
+  "terrace",
+  "office",
+  "lounge",
+  "secret",
+  "garden",
+];
+
+export function isActiveZone(x: unknown): x is ActiveZone {
+  return typeof x === "string" && (ALL_ACTIVE_ZONES as string[]).includes(x);
+}
 
 /** Id зоны в `Upgrade.zone` и в `ProgressionState.unlockedZones` (кроме `meta`). */
 export type ProgressZoneId =
@@ -252,10 +275,23 @@ export interface GameState {
   maxEnergy: number;
   orders: Order[];
   isFirstLaunch: boolean;
+  /** Комната, с которой открыта текущая сессия поля (генератор и лут с грязи). */
+  playZone: ActiveZone;
 }
 
 const FRUIT_CHAIN_LEN = 7;
 const SWEETS_CHAIN_LEN = 7;
+
+const ROOM_ITEM_CHAINS_MAP: Record<string, ItemChain> = Object.fromEntries(
+  Object.values(ROOM_MERGE_CHAINS).map((c) => [
+    c.id,
+    {
+      id: c.id,
+      name: c.name,
+      items: c.items as MergeableItemDefinition[],
+    },
+  ])
+);
 
 export const ITEM_CHAINS: Record<string, ItemChain> = {
   fruit: {
@@ -436,7 +472,38 @@ export const ITEM_CHAINS: Record<string, ItemChain> = {
       },
     ],
   },
+  ...ROOM_ITEM_CHAINS_MAP,
 };
+
+const GENERATOR_ID_TO_PLAY_ZONE: Record<string, ActiveZone> = (() => {
+  const m: Record<string, ActiveZone> = {
+    basket_generator: "hall",
+  };
+  (Object.keys(ZONE_TO_GENERATOR_ID) as ActiveZone[]).forEach((z) => {
+    m[ZONE_TO_GENERATOR_ID[z]] = z;
+  });
+  return m;
+})();
+
+export function mergeChainIdForZone(z: ActiveZone): string {
+  return ZONE_TO_MERGE_CHAIN_ID[z];
+}
+
+export function generatorItemIdForZone(z: ActiveZone): string {
+  return ZONE_TO_GENERATOR_ID[z];
+}
+
+export function activeZoneFromGeneratorItemId(itemId: string): ActiveZone | null {
+  const z = GENERATOR_ID_TO_PLAY_ZONE[itemId];
+  return z ?? null;
+}
+
+/** Лут с грязи: цепочка текущей комнаты + фрукты и сладости (не раздувает пул). */
+export function chainsForSessionDirtyLoot(zone: ActiveZone): ItemChain[] {
+  const primary = ITEM_CHAINS[mergeChainIdForZone(zone)];
+  const list = [primary, ITEM_CHAINS.fruit, ITEM_CHAINS.sweets];
+  return list.filter((c): c is ItemChain => Boolean(c));
+}
 
 /** Цепочки для заказов и случайного лута (без ключей). */
 export function chainsEligibleForLootAndOrders(): ItemChain[] {
@@ -453,7 +520,24 @@ const ALL_ITEMS_FROM_CHAINS: Record<ItemId, ItemDefinition> = Object.values(ITEM
   {} as Record<ItemId, ItemDefinition>
 );
 
-/** Пример генератора: корзина даёт 1-й уровень фруктовой цепочки. */
+const ROOM_ZONE_GENERATORS: Record<ItemId, GeneratorItemDefinition> = Object.fromEntries(
+  Object.values(ROOM_GENERATOR_DEFS).map((g) => [
+    g.id,
+    {
+      id: g.id,
+      name: g.name,
+      emoji: g.emoji,
+      chain: "generator",
+      isGenerator: true as const,
+      spawnsChainId: g.spawnsChainId,
+      xpReward: 0,
+      coinReward: 0,
+      rarity: "common" as const,
+    },
+  ])
+);
+
+/** Корзина (наследие сохранений) и генераторы по комнатам. */
 const GENERATOR_ITEMS: Record<ItemId, ItemDefinition> = {
   basket_generator: {
     id: "basket_generator",
@@ -466,6 +550,7 @@ const GENERATOR_ITEMS: Record<ItemId, ItemDefinition> = {
     coinReward: 0,
     rarity: "common",
   },
+  ...ROOM_ZONE_GENERATORS,
 };
 
 const RESOURCE_PICKUP_ITEMS: Record<ItemId, ItemDefinition> = {

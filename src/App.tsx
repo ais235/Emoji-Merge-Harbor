@@ -18,6 +18,10 @@ import {
   ProgressionState,
   type AppScreen,
   type ActiveZone,
+  activeZoneFromGeneratorItemId,
+  chainsForSessionDirtyLoot,
+  generatorItemIdForZone,
+  isActiveZone,
   type GridCell,
   type CoinFlyState,
   isObstacleCellState,
@@ -102,14 +106,14 @@ function createNormalEmptyGridCell(): GridCell {
   return { item: null, cellState: "normal" };
 }
 
-/** Одна корзина-генератор в первой свободной обычной клетке (новая сетка / сессия). */
-function placeInitialGenerator(grid: GridCell[]): GridCell[] {
+/** Генератор комнаты в первой свободной обычной клетке (новая сетка / сессия). */
+function placeInitialGenerator(grid: GridCell[], zone: ActiveZone): GridCell[] {
   const next = grid.map((c) => ({ ...c }));
   const i = next.findIndex((c) => c.item === null && c.cellState === "normal");
   if (i >= 0) {
     next[i] = {
       ...next[i],
-      item: "basket_generator",
+      item: generatorItemIdForZone(zone),
       generatorCharges: INITIAL_GENERATOR_CHARGES,
     };
   }
@@ -145,10 +149,19 @@ function gridHasGenerator(grid: GridCell[]): boolean {
   });
 }
 
-/** Старые сохранения без генератора: одна корзина, чтобы не остаться без спавна. */
-function ensureGeneratorOnGrid(grid: GridCell[]): GridCell[] {
+/** Старые сохранения без генератора — ставим генератор текущей комнаты. */
+function ensureGeneratorOnGrid(grid: GridCell[], zone: ActiveZone): GridCell[] {
   if (gridHasGenerator(grid)) return grid;
-  return placeInitialGenerator(grid.map((c) => ({ ...c })));
+  return placeInitialGenerator(grid.map((c) => ({ ...c })), zone);
+}
+
+function inferPlayZoneFromGrid(grid: GridCell[]): ActiveZone {
+  for (const c of grid) {
+    if (!c.item) continue;
+    const z = activeZoneFromGeneratorItemId(c.item);
+    if (z) return z;
+  }
+  return "hall";
 }
 
 /** Только для теста: при новой игре N случайных ячеек — препятствие dirty_2 (загрузка из storage не трогается). */
@@ -198,14 +211,15 @@ function placeInitialKey(grid: GridCell[]): GridCell[] {
   return next;
 }
 
-function buildFreshPlayGrid(): GridCell[] {
+function buildFreshPlayGrid(zone: ActiveZone): GridCell[] {
   return placeInitialKey(
     placeInitialGenerator(
       applyTestRandomLockedCells(
         applyTestRandomDirty2Cells(
           Array.from({ length: MAX_GRID_CELLS }, () => createNormalEmptyGridCell())
         )
-      )
+      ),
+      zone
     )
   );
 }
@@ -335,8 +349,9 @@ function hydrateGameStateFromStorage(raw: unknown): GameState | null {
   const g = raw as Record<string, unknown>;
   const grid = normalizeGridFromStorage(g.grid, MAX_GRID_CELLS);
   if (!grid) return null;
+  const playZone = isActiveZone(g.playZone) ? g.playZone : inferPlayZoneFromGrid(grid);
   return {
-    grid: ensureGeneratorOnGrid(grid),
+    grid: ensureGeneratorOnGrid(grid, playZone),
     energy: typeof g.energy === "number" ? g.energy : INITIAL_ENERGY,
     maxEnergy: typeof g.maxEnergy === "number" ? g.maxEnergy : INITIAL_ENERGY,
     orders: (() => {
@@ -344,6 +359,7 @@ function hydrateGameStateFromStorage(raw: unknown): GameState | null {
       return raw.length > 0 ? raw : createInitialOrders();
     })(),
     isFirstLaunch: g.isFirstLaunch !== false,
+    playZone,
   };
 }
 
@@ -447,7 +463,7 @@ export default function App() {
       if (!s) return s;
       return {
         ...s,
-        grid: buildFreshPlayGrid(),
+        grid: buildFreshPlayGrid(s.playZone),
       };
     });
     setSelectedCell(null);
@@ -464,7 +480,7 @@ export default function App() {
       if (!s) return s;
       return {
         ...s,
-        grid: buildFreshPlayGrid(),
+        grid: buildFreshPlayGrid(s.playZone),
         orders: createInitialOrders(),
       };
     });
@@ -539,11 +555,12 @@ export default function App() {
       collectionChainRewardsClaimed: {},
     };
     const initialGameState: GameState = {
-      grid: buildFreshPlayGrid(),
+      grid: buildFreshPlayGrid("hall"),
       energy: startEnergy,
       maxEnergy: startEnergy,
       orders: createInitialOrders(),
       isFirstLaunch: true,
+      playZone: "hall",
     };
     setProgState(initialProgState);
     setState(initialGameState);
@@ -810,7 +827,8 @@ export default function App() {
           index,
           GRID_WIDTH,
           GRID_HEIGHT,
-          playBonuses.dirty_drop_chance
+          playBonuses.dirty_drop_chance,
+          chainsForSessionDirtyLoot(state.playZone)
         );
         if (lootAt !== null) {
           setCellDirtyLootFlashIndices([lootAt]);
@@ -955,7 +973,8 @@ export default function App() {
                   ni,
                   GRID_WIDTH,
                   GRID_HEIGHT,
-                  playBonuses.dirty_drop_chance
+                  playBonuses.dirty_drop_chance,
+                  chainsForSessionDirtyLoot(state.playZone)
                 );
                 if (lootAt !== null) dirtyLootSpawnCells.push(lootAt);
               }
@@ -1319,9 +1338,24 @@ export default function App() {
     setCurrentScreen("game");
     if (state?.isFirstLaunch) {
       setShowTutorial(true);
-      setState((s) => (s ? { ...s, isFirstLaunch: false } : s));
     }
-  }, [state?.isFirstLaunch]);
+    setState((s) => {
+      if (!s) return s;
+      let next = { ...s };
+      if (next.playZone !== activeZone) {
+        next = {
+          ...next,
+          playZone: activeZone,
+          grid: buildFreshPlayGrid(activeZone),
+          orders: createInitialOrders(),
+        };
+      }
+      if (state?.isFirstLaunch) {
+        next = { ...next, isFirstLaunch: false };
+      }
+      return next;
+    });
+  }, [activeZone, state?.isFirstLaunch]);
 
   if (!state || !progState) {
     return (
