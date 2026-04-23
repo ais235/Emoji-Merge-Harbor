@@ -69,10 +69,11 @@ public/rooms/hall/table_fix.png
 | Плита | `public/rooms/kitchen/kitchen_stove.png` | `/rooms/kitchen/kitchen_stove.png` |
 | Полки | `public/rooms/kitchen/kitchen_shelves.png` | `/rooms/kitchen/kitchen_shelves.png` |
 | Холодильник | `public/rooms/kitchen/kitchen_fridge.png` | `/rooms/kitchen/kitchen_fridge.png` |
-| Посуда | `public/rooms/kitchen/kitchen_dishes.png` | `/rooms/kitchen/kitchen_dishes.png` |
-| Барный стул | `public/rooms/kitchen/kitchen_bar_stool.png` | `/rooms/kitchen/kitchen_bar_stool.png` |
+| Кухонный стол | `public/rooms/kitchen/kitchen_table.png` | `/rooms/kitchen/kitchen_table.png` |
 | Шторы | `public/rooms/kitchen/kitchen_curtains.png` | `/rooms/kitchen/kitchen_curtains.png` |
-| Вытяжка | `public/rooms/kitchen/kitchen_hood.png` | `/rooms/kitchen/kitchen_hood.png` |
+| Раковина | `public/rooms/kitchen/kitchen_sink.png` | `/rooms/kitchen/kitchen_sink.png` |
+| Кухонный уголок | `public/rooms/kitchen/kitchen_corner.png` | `/rooms/kitchen/kitchen_corner.png` |
+| Кухонный шкаф | `public/rooms/kitchen/kitchen_cabinet.png` | `/rooms/kitchen/kitchen_cabinet.png` |
 
 Фон: `public/rooms/kitchen-bg.png`
 
@@ -97,11 +98,14 @@ public/rooms/hall/table_fix.png
 |---------|------|------------|
 | Ванна | `public/rooms/bathroom/bathroom_bath.png` | `/rooms/bathroom/bathroom_bath.png` |
 | Раковина | `public/rooms/bathroom/bathroom_sink.png` | `/rooms/bathroom/bathroom_sink.png` |
-| Полотенца | `public/rooms/bathroom/bathroom_towels.png` | `/rooms/bathroom/bathroom_towels.png` |
+| Туалет | `public/rooms/bathroom/bathroom_toilet.png` | `/rooms/bathroom/bathroom_toilet.png` |
 | Зеркало | `public/rooms/bathroom/bathroom_mirror.png` | `/rooms/bathroom/bathroom_mirror.png` |
 | Полка | `public/rooms/bathroom/bathroom_rack.png` | `/rooms/bathroom/bathroom_rack.png` |
 | Коврик | `public/rooms/bathroom/bathroom_mat.png` | `/rooms/bathroom/bathroom_mat.png` |
+| Стиральная машина | `public/rooms/bathroom/bathroom_washer.png` | `/rooms/bathroom/bathroom_washer.png` |
+| Занавески | `public/rooms/bathroom/bathroom_curtain.png` | `/rooms/bathroom/bathroom_curtain.png` |
 | Растения | `public/rooms/bathroom/bathroom_plants.png` | `/rooms/bathroom/bathroom_plants.png` |
+| Корзина для белья | `public/rooms/bathroom/bathroom_laundry_basket.png` | `/rooms/bathroom/bathroom_laundry_basket.png` |
 | Свет | `public/rooms/bathroom/bathroom_light.png` | `/rooms/bathroom/bathroom_light.png` |
 
 Фон: `public/rooms/bathroom-bg.png`
@@ -112,12 +116,13 @@ public/rooms/hall/table_fix.png
 |---------|------|------------|
 | Зонт | `public/rooms/terrace/terrace_umbrella.png` | `/rooms/terrace/terrace_umbrella.png` |
 | Растения | `public/rooms/terrace/terrace_plants.png` | `/rooms/terrace/terrace_plants.png` |
-| Перила | `public/rooms/terrace/terrace_railings.png` | `/rooms/terrace/terrace_railings.png` |
-| Мебель | `public/rooms/terrace/terrace_furniture.png` | `/rooms/terrace/terrace_furniture.png` |
-| Гирлянды | `public/rooms/terrace/terrace_garlands.png` | `/rooms/terrace/terrace_garlands.png` |
+| Стулья | `public/rooms/terrace/terrace_chairs.png` | `/rooms/terrace/terrace_chairs.png` |
+| Стол | `public/rooms/terrace/terrace_table.png` | `/rooms/terrace/terrace_table.png` |
+| Столик | `public/rooms/terrace/terrace_side_table.png` | `/rooms/terrace/terrace_side_table.png` |
+| Барбекю гриль | `public/rooms/terrace/terrace_bbq.png` | `/rooms/terrace/terrace_bbq.png` |
+| Кушетка | `public/rooms/terrace/terrace_chaise.png` | `/rooms/terrace/terrace_chaise.png` |
+| Шезлонг | `public/rooms/terrace/terrace_sunlounger.png` | `/rooms/terrace/terrace_sunlounger.png` |
 | Кормушка | `public/rooms/terrace/terrace_feeder.png` | `/rooms/terrace/terrace_feeder.png` |
-| Фонарь | `public/rooms/terrace/terrace_lantern.png` | `/rooms/terrace/terrace_lantern.png` |
-| Настил | `public/rooms/terrace/terrace_floor.png` | `/rooms/terrace/terrace_floor.png` |
 
 Фон: `public/rooms/terrace-bg.png`
 

@@ -97,10 +97,11 @@ const ROOM_UPGRADES: Upgrade[] = [
   v("kitchen_stove", "Плита", "kitchen", 300, 5, "Можно греть и готовить"),
   v("kitchen_shelves", "Полки", "kitchen", 200, 6, "Специи и суши"),
   v("kitchen_fridge", "Холодильник", "kitchen", 400, 7, "Продукты не испортятся"),
-  v("kitchen_dishes", "Посуда", "kitchen", 250, 8, "Стопки тарелок, как в кафе"),
-  v("kitchen_bar_stool", "Барный стул", "kitchen", 180, 9, "Удобно у стойки"),
+  v("kitchen_table", "Кухонный стол", "kitchen", 180, 8, "За столом — и завтрак, и разговоры"),
   v("kitchen_curtains", "Шторы", "kitchen", 320, 9, "Меньше солнца в глаза"),
-  v("kitchen_hood", "Вытяжка", "kitchen", 450, 10, "На кухне не душно"),
+  v("kitchen_sink", "Раковина", "kitchen", 450, 10, "Мытьё сразу у мойки — удобно"),
+  v("kitchen_corner", "Кухонный уголок", "kitchen", 380, 10, "Уютный угол для чая и хлеба"),
+  v("kitchen_cabinet", "Кухонный шкаф", "kitchen", 420, 11, "Всё с кухни спрячется за дверцами"),
 
   // Bedroom (7+)
   v("bedroom_bed", "Кровать", "bedroom", 420, 7, "Наконец-то выспаться"),
@@ -115,22 +116,26 @@ const ROOM_UPGRADES: Upgrade[] = [
   // Bathroom (8+)
   v("bathroom_bath", "Ванна", "bathroom", 520, 8, "Долгие ванны возвращаются"),
   v("bathroom_sink", "Раковина", "bathroom", 340, 8, "Чистота и порядок"),
-  v("bathroom_towels", "Полотенца", "bathroom", 220, 9, "Мягкие и свежие"),
+  v("bathroom_toilet", "Туалет", "bathroom", 240, 9, "Удобство без походов в коридор"),
   v("bathroom_mirror", "Зеркало", "bathroom", 280, 9, "Утренний ритуал"),
   v("bathroom_rack", "Полка для банных", "bathroom", 310, 10, "Всё под рукой"),
   v("bathroom_mat", "Коврик", "bathroom", 190, 10, "Не скользит"),
+  v("bathroom_washer", "Стиральная машина", "bathroom", 430, 10, "Стирать можно не выходя из комнаты"),
+  v("bathroom_curtain", "Занавески", "bathroom", 270, 10, "Вода не брызгает наружу"),
   v("bathroom_plants", "Растения", "bathroom", 360, 11, "Зелень и влажность"),
+  v("bathroom_laundry_basket", "Корзина для белья", "bathroom", 210, 11, "Грязное — отдельно, чистое — отдельно"),
   v("bathroom_light", "Подсветка", "bathroom", 320, 11, "Спокойный свет"),
 
   // Terrace 10–15
   v("terrace_umbrella", "Зонт", "terrace", 800, 10, "Тень в жаркий день"),
   v("terrace_plants", "Растения", "terrace", 600, 11, "Горшки и зелень"),
-  v("terrace_railings", "Перила", "terrace", 750, 11, "Аккуратный контур"),
-  v("terrace_furniture", "Садовая мебель", "terrace", 900, 12, "Стол и кресла снаружи"),
-  v("terrace_garlands", "Гирлянды", "terrace", 700, 13, "Вечером красиво"),
+  v("terrace_chairs", "Стулья", "terrace", 720, 11, "Места для компании"),
+  v("terrace_table", "Стол", "terrace", 880, 12, "Завтраки и вечера на свежем воздухе"),
+  v("terrace_side_table", "Столик", "terrace", 480, 12, "Чай, книга, закат"),
   v("terrace_feeder", "Кормушка", "terrace", 500, 12, "Птицы заглянут"),
-  v("terrace_lantern", "Фонарь", "terrace", 850, 14, "Уютный свет"),
-  v("terrace_floor", "Настил", "terrace", 920, 14, "Ровная поверхность"),
+  v("terrace_bbq", "Барбекю гриль", "terrace", 950, 13, "Запах лета у дома"),
+  v("terrace_chaise", "Кушетка", "terrace", 820, 14, "Удобно вытянуть ноги"),
+  v("terrace_sunlounger", "Шезлонг", "terrace", 780, 14, "Солнце по расписанию"),
 
   // Office 12+
   v("office_desk", "Стол", "office", 980, 12, "Рабочее место"),
@@ -207,6 +212,37 @@ const META_UPGRADES: Upgrade[] = [
 ];
 
 export const UPGRADES: Upgrade[] = [...ROOM_UPGRADES, ...META_UPGRADES];
+
+/** Старые id апгрейдов → актуальные (миграция сохранений). */
+const LEGACY_UPGRADE_ID_MAP: Record<string, string> = {
+  kitchen_bar_stool: "kitchen_table",
+  kitchen_hood: "kitchen_sink",
+  bathroom_towels: "bathroom_toilet",
+  terrace_furniture: "terrace_table",
+};
+
+const REMOVED_UPGRADE_IDS = new Set<string>([
+  "kitchen_dishes",
+  "terrace_railings",
+  "terrace_lantern",
+  "terrace_floor",
+  "terrace_garlands",
+]);
+
+export function migrateLegacyUpgradeIds(purchased: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of purchased) {
+    if (REMOVED_UPGRADE_IDS.has(id)) continue;
+    const mapped = LEGACY_UPGRADE_ID_MAP[id] ?? id;
+    if (REMOVED_UPGRADE_IDS.has(mapped)) continue;
+    if (!seen.has(mapped)) {
+      seen.add(mapped);
+      out.push(mapped);
+    }
+  }
+  return out;
+}
 
 export const META_COIN_UPGRADES: string[] = [
   "meta_gen_plus_charge",
