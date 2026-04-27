@@ -38,6 +38,25 @@ export function boxGridCell(loot?: {
   };
 }
 
+/** Ящик-намёк на границе зоны (открывается той же логикой, что и box). */
+export function hintBoxGridCell(loot: {
+  boxItem: ItemId;
+  boxItemLevel: number;
+  boxChainId: string;
+}): GridCell {
+  return {
+    cellType: "hint_box",
+    item: null,
+    itemLevel: 0,
+    chainId: null,
+    boxItem: loot.boxItem,
+    boxItemLevel: loot.boxItemLevel,
+    boxChainId: loot.boxChainId,
+    boxIsGenerator: false,
+    boxGeneratorId: null,
+  };
+}
+
 /** Закрытый ящик: при открытии слиянием на клетке появится генератор. */
 export function generatorBoxGridCell(generatorItemId: string): GridCell {
   return {
@@ -87,7 +106,7 @@ export function itemGridCell(itemId: ItemId): GridCell {
 /** Синхронизировать itemLevel / chainId с ALL_ITEMS для item/generator. */
 export function withSyncedItemMeta(cell: GridCell): GridCell {
   const stripBoxIfNeeded = (c: GridCell): GridCell =>
-    c.cellType === "box"
+    c.cellType === "box" || c.cellType === "hint_box"
       ? c
       : {
           ...c,
@@ -99,7 +118,7 @@ export function withSyncedItemMeta(cell: GridCell): GridCell {
         };
 
   if (!cell.item) {
-    if (cell.cellType === "empty" || cell.cellType === "box") {
+    if (cell.cellType === "empty" || cell.cellType === "box" || cell.cellType === "hint_box") {
       return stripBoxIfNeeded({ ...cell, itemLevel: 0, chainId: null });
     }
     return stripBoxIfNeeded(cell);

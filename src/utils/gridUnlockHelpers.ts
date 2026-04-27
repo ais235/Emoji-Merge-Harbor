@@ -10,6 +10,7 @@ import {
   emptyGridCell,
   generatorBoxGridCell,
   generatorGridCell,
+  hintBoxGridCell,
   itemGridCell,
   withSyncedItemMeta,
 } from "./gridCells";
@@ -31,6 +32,7 @@ export function migrateLegacyGridCell(entry: unknown): GridCell {
       rawT === "fog" ||
       rawT === "chest" ||
       rawT === "box" ||
+      rawT === "hint_box" ||
       rawT === "cobweb"
         ? (rawT as string)
         : "empty";
@@ -43,7 +45,7 @@ export function migrateLegacyGridCell(entry: unknown): GridCell {
     const itemLevel = typeof o.itemLevel === "number" ? o.itemLevel : 0;
     const chainId = typeof o.chainId === "string" ? o.chainId : null;
 
-    if (legacyType === "box") {
+    if (legacyType === "box" || legacyType === "hint_box") {
       const bi = typeof o.boxItem === "string" ? (o.boxItem as ItemId) : null;
       const bl = typeof o.boxItemLevel === "number" ? o.boxItemLevel : 0;
       const bc = typeof o.boxChainId === "string" ? o.boxChainId : null;
@@ -53,7 +55,8 @@ export function migrateLegacyGridCell(entry: unknown): GridCell {
         return normalizeCellFields(generatorBoxGridCell(genId));
       }
       if (bi && bc && bl > 0 && ALL_ITEMS[bi]) {
-        return normalizeCellFields(boxGridCell({ boxItem: bi, boxItemLevel: bl, boxChainId: bc }));
+        const loot = { boxItem: bi, boxItemLevel: bl, boxChainId: bc };
+        return normalizeCellFields(legacyType === "hint_box" ? hintBoxGridCell(loot) : boxGridCell(loot));
       }
       return normalizeCellFields(boxGridCell());
     }

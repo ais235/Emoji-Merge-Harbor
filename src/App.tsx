@@ -28,6 +28,7 @@ import {
   mergeChainIdForZone,
   isActiveZone,
   type GridCell,
+  type FieldProgressState,
   type CoinFlyState,
   isOpenCellType,
   isBlockedCellType,
@@ -75,15 +76,28 @@ import { initAudio, initSoundPreferenceFromStorage, isSoundMuted, setSoundMuted,
 import { pickEmptyCellForGeneratorSpawn } from "./utils/grid";
 import { hasEffectiveMoves } from "./utils/availableMoves";
 import { migrateLegacyGridCell } from "./utils/gridUnlockHelpers";
-import { buildInitialGrid } from "./utils/buildInitialGrid";
+import { buildInitialGrid, type BuildInitialGridResult } from "./utils/buildInitialGrid";
+import {
+  handleMergeFieldProgress,
+  handleOrderFieldProgress,
+  migrateFieldProgressFromGrid,
+  type MergeFieldProgressResult,
+} from "./utils/mergeFieldProgress";
 import { emptyGridCell, generatorGridCell, itemGridCell, withSyncedItemMeta } from "./utils/gridCells";
-import { openAdjacentBoxAfterMerge } from "./utils/openAdjacentBox";
 import {
   bumpMaxSeenItemLevelFromGrid,
   playerTierMaxOrderItemLevel,
+  playerTierMinOrderItemLevel,
   playerTierOrderChainSliceCount,
-  playerTierOrderSlotCount,
 } from "./utils/sessionGridProgress";
+import {
+  ENERGY_AD_REWARD,
+  ENERGY_COIN_PACK_AMOUNT,
+  ENERGY_COIN_PACK_COST,
+  ENERGY_MAX_DEFAULT,
+  ENERGY_ORDER_COMPLETE_BONUS,
+  ENERGY_REGEN_INTERVAL_MS,
+} from "./gameBalance";
 import {
   canGenerateMinigameOrder,
   incrementMinigameOrderComplete,
@@ -109,9 +123,8 @@ const DAILY_STREAK_KEY = "dailyStreak";
 const GRID_WIDTH = 9;
 const GRID_HEIGHT = 12;
 const MAX_GRID_CELLS = GRID_WIDTH * GRID_HEIGHT;
-const INITIAL_ENERGY = 100;
-/** 1 е. энергии каждые 10 с, пока energy ниже maxEnergy. */
-const ENERGY_REGEN_INTERVAL_MS = 10_000;
+/** Стартовый и базовый максимум энергии (до бонусов из прогрессии). */
+const INITIAL_ENERGY = ENERGY_MAX_DEFAULT;
 
 /** В dev mode на хабе считаем открытыми все комнаты (id как в `unlockedZones`). */
 function hubUnlockedZonesForUi(devMode: boolean, prog: ProgressionState): string[] {
@@ -177,13 +190,62 @@ function inferPlayZoneFromGrid(grid: GridCell[]): ActiveZone {
   return "hall";
 }
 
-function buildFreshPlayGrid(zone: ActiveZone): GridCell[] {
+function buildFreshPlayGrid(zone: ActiveZone): BuildInitialGridResult {
   return buildInitialGrid(GRID_WIDTH, GRID_HEIGHT, zone);
+}
+
+function normalizeFieldProgressFromStorage(
+  raw: unknown,
+  grid: GridCell[],
+  totalOrdersCompletedFallback: number
+): FieldProgressState {
+  const migrated = migrateFieldProgressFromGrid(grid, GRID_WIDTH, GRID_HEIGHT, totalOrdersCompletedFallback);
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    const q = o.unlockQueues;
+    if (q && typeof q === "object") {
+      const qq = q as Record<string, unknown>;
+      const z1 = qq.zone_1;
+      const z2 = qq.zone_2;
+      const z3 = qq.zone_3;
+      if (Array.isArray(z1) && Array.isArray(z2) && Array.isArray(z3)) {
+        const nums = (arr: unknown[]) =>
+          arr.filter((x): x is number => typeof x === "number" && x >= 0 && Number.isFinite(x) && Number.isInteger(x));
+        return {
+          unlockQueues: {
+            zone_1: nums(z1),
+            zone_2: nums(z2),
+            zone_3: nums(z3),
+          },
+          zone1MergeProgress:
+            typeof o.zone1MergeProgress === "number"
+              ? Math.max(0, Math.floor(o.zone1MergeProgress))
+              : migrated.zone1MergeProgress,
+          ordersForFieldProgress:
+            typeof o.ordersForFieldProgress === "number"
+              ? Math.max(0, Math.floor(o.ordersForFieldProgress))
+              : migrated.ordersForFieldProgress,
+        };
+      }
+    }
+  }
+  return migrated;
 }
 
 function normalizeGridFromStorage(rawGrid: unknown, expectedLen: number): GridCell[] | null {
   if (!Array.isArray(rawGrid) || rawGrid.length !== expectedLen) return null;
   return rawGrid.map((entry) => migrateLegacyGridCell(entry));
+}
+
+function applyEnergyCapsForProgress(gs: GameState, prog: ProgressionState): GameState {
+  const bonuses = new ProgressionManager(prog).getActiveBonuses();
+  const cap = INITIAL_ENERGY + bonuses.energy_max;
+  return {
+    ...gs,
+    maxEnergy: cap,
+    energy: Math.min(gs.energy, cap),
+    lastEnergyRegenAt: gs.lastEnergyRegenAt ?? Date.now(),
+  };
 }
 
 function mergeableItemsInChain(chain: ItemChain): MergeableItemDefinition[] {
@@ -204,11 +266,14 @@ function buildRandomSessionOrder(
   const chainsBase =
     chainsFromGens.length > 0 ? chainsFromGens : [ITEM_CHAINS[mergeChainIdForZone(zone)] ?? ITEM_CHAINS.fruit];
 
-  const tierCap = playerTierMaxOrderItemLevel(level);
-  const allowedMaxLevel = Math.max(1, Math.min(maxSeenItemLevel, tierCap));
+  const tierMin = playerTierMinOrderItemLevel(level);
+  const tierMaxCap = playerTierMaxOrderItemLevel(level);
+  const orderMaxLevel = Math.min(Math.max(1, maxSeenItemLevel) + 1, tierMaxCap);
+  const orderMinLevel = Math.min(tierMin, orderMaxLevel);
+  const allowedMinLevel = Math.max(1, orderMinLevel);
+  const allowedMaxLevel = Math.max(allowedMinLevel, orderMaxLevel);
 
   const spawnChainIds = new Set(chainsBase.map((c) => c.id));
-
   const candidateIds = new Set<string>();
 
   for (const c of grid) {
@@ -217,13 +282,13 @@ function buildRandomSessionOrder(
     const d = ALL_ITEMS[c.item];
     if (!d || !("level" in d) || itemIsGenerator(d) || itemIsResourcePickup(d)) continue;
     const lv = c.cellType === "cobweb" ? Math.max(1, c.itemLevel) : d.level;
-    if (lv > allowedMaxLevel) continue;
+    if (lv < allowedMinLevel || lv > allowedMaxLevel) continue;
     candidateIds.add(c.item);
   }
 
   for (const ch of chainsBase) {
     for (const it of mergeableItemsInChain(ch)) {
-      if (it.level >= 1 && it.level <= 2 && it.level <= allowedMaxLevel) candidateIds.add(it.id);
+      if (it.level >= allowedMinLevel && it.level <= allowedMaxLevel) candidateIds.add(it.id);
     }
   }
 
@@ -234,33 +299,42 @@ function buildRandomSessionOrder(
   for (const id of [...candidateIds]) {
     const d = ALL_ITEMS[id];
     if (!d || !("level" in d) || itemIsGenerator(d) || itemIsResourcePickup(d)) continue;
-    const onGrid = grid.some(
-      (cell) =>
-        (cell.cellType === "item" || cell.cellType === "cobweb") &&
-        cell.item === id &&
-        (cell.cellType === "cobweb" ? Math.max(1, cell.itemLevel) : d.level) <= allowedMaxLevel
-    );
-    const spawnableLow =
-      d.level <= 2 && d.level <= allowedMaxLevel && spawnChainIds.has(d.chain) && allowedChainIds.has(d.chain);
-    if (!onGrid && !spawnableLow) candidateIds.delete(id);
+    const onGrid = grid.some((cell) => {
+      if (cell.item !== id || (cell.cellType !== "item" && cell.cellType !== "cobweb")) return false;
+      const lv = cell.cellType === "cobweb" ? Math.max(1, cell.itemLevel) : d.level;
+      return lv >= allowedMinLevel && lv <= allowedMaxLevel;
+    });
+    const spawnable =
+      d.level >= allowedMinLevel &&
+      d.level <= allowedMaxLevel &&
+      spawnChainIds.has(d.chain) &&
+      allowedChainIds.has(d.chain);
+    if (!onGrid && !spawnable) candidateIds.delete(id);
   }
 
-  let typeCount = Math.min(3, playerTierOrderSlotCount(level), Math.max(1, candidateIds.size));
   const poolShuffled = [...candidateIds].sort(() => Math.random() - 0.5);
-  const usedItemIds = new Set<string>();
   const requirements: OrderRequirement[] = [];
-  for (let t = 0; t < typeCount; t++) {
-    const pick = poolShuffled.find((id) => !usedItemIds.has(id));
-    if (!pick) break;
-    usedItemIds.add(pick);
-    requirements.push({ itemId: pick, count: 1 });
-  }
+  const firstPick = poolShuffled[0];
+  if (firstPick) requirements.push({ itemId: firstPick, count: 1 });
 
   if (requirements.length === 0) {
+    for (const ch of chainsBase) {
+      const pool = mergeableItemsInChain(ch).filter(
+        (x) => x.level >= allowedMinLevel && x.level <= allowedMaxLevel
+      );
+      if (pool.length > 0) {
+        const pick = pool[Math.floor(Math.random() * pool.length)]!;
+        requirements.push({ itemId: pick.id, count: 1 });
+        break;
+      }
+    }
+  }
+  if (requirements.length === 0) {
     const ch = chainsBase[0]!;
-    const pool = mergeableItemsInChain(ch).filter((x) => x.level <= allowedMaxLevel && x.level >= 1);
-    const first = pool.find((x) => x.level === 1) ?? pool[0] ?? mergeableItemsInChain(ch)[0];
-    if (first) requirements.push({ itemId: first.id, count: 1 });
+    const pool = mergeableItemsInChain(ch).filter((x) => x.level >= 1 && x.level <= allowedMaxLevel);
+    const pick =
+      pool.find((x) => x.level >= allowedMinLevel) ?? pool[pool.length - 1] ?? mergeableItemsInChain(ch)[0];
+    if (pick) requirements.push({ itemId: pick.id, count: 1 });
   }
   if (requirements.length === 0) {
     requirements.push({ itemId: mergeableItemsInChain(ITEM_CHAINS.fruit)[0]?.id ?? "f1", count: 1 });
@@ -289,6 +363,33 @@ function buildRandomSessionOrder(
   };
 }
 
+function orderPrimaryItemId(o: Order): string | null {
+  return o.requirements[0]?.itemId ?? null;
+}
+
+function orderConflictsWithExisting(candidate: Order, existing: Order[]): boolean {
+  const sig = orderPrimaryItemId(candidate);
+  if (!sig) return false;
+  return existing.some((o) => orderPrimaryItemId(o) === sig);
+}
+
+function buildUniqueRandomOrder(
+  existing: Order[],
+  level: number,
+  maxSeenItemLevel: number,
+  grid: GridCell[],
+  zone: ActiveZone,
+  orderId: string
+): Order {
+  let attempts = 0;
+  let order = buildRandomSessionOrder(level, maxSeenItemLevel, grid, zone, orderId);
+  while (attempts < 10 && orderConflictsWithExisting(order, existing)) {
+    attempts += 1;
+    order = buildRandomSessionOrder(level, maxSeenItemLevel, grid, zone, `${orderId}_u${attempts}`);
+  }
+  return order;
+}
+
 function createInitialOrders(
   grid: GridCell[],
   zone: ActiveZone,
@@ -299,7 +400,7 @@ function createInitialOrders(
   const out: Order[] = [];
   let i = 0;
   while (out.length < MAX_ACTIVE_ORDERS && canGenerateMinigameOrder(orderLimitProg, zone)) {
-    out.push(buildRandomSessionOrder(level, maxSeenItemLevel, grid, zone, `o${i + 1}`));
+    out.push(buildUniqueRandomOrder(out, level, maxSeenItemLevel, grid, zone, `o${i + 1}`));
     i += 1;
     if (i > 20) break;
   }
@@ -310,9 +411,17 @@ function generateNewOrder(
   level: number,
   maxSeenItemLevel: number,
   grid: GridCell[],
-  zone: ActiveZone
+  zone: ActiveZone,
+  existingOrders: Order[]
 ): Order {
-  return buildRandomSessionOrder(level, maxSeenItemLevel, grid, zone, Math.random().toString(36).slice(2, 11));
+  return buildUniqueRandomOrder(
+    existingOrders,
+    level,
+    maxSeenItemLevel,
+    grid,
+    zone,
+    Math.random().toString(36).slice(2, 11)
+  );
 }
 
 function normalizeOrdersFromStorage(raw: unknown[]): Order[] {
@@ -387,39 +496,54 @@ function hydrateGameStateFromStorage(
   maxSeenItemLevel = 1,
   progForOrderLimit: Pick<
     ProgressionState,
-    "minigameOrdersAtRoomRepair" | "purchasedUpgrades" | "level"
+    "minigameOrdersAtRoomRepair" | "purchasedUpgrades" | "level" | "totalOrdersCompleted"
   > | null = null
 ): GameState | null {
   if (!raw || typeof raw !== "object") return null;
   const g = raw as Record<string, unknown>;
-  let grid = normalizeGridFromStorage(g.grid, MAX_GRID_CELLS);
   const playZone = isActiveZone(g.playZone) ? (g.playZone as ActiveZone) : "hall";
+  let grid = normalizeGridFromStorage(g.grid, MAX_GRID_CELLS);
+  let fieldProgress: FieldProgressState;
   if (!grid || grid.length !== MAX_GRID_CELLS) {
-    grid = buildFreshPlayGrid(playZone);
+    const built = buildFreshPlayGrid(playZone);
+    grid = ensureGeneratorOnGrid(built.grid, playZone);
+    fieldProgress = built.fieldProgress;
   } else {
     grid = ensureGeneratorOnGrid(grid, playZone);
+    const ordersHint =
+      typeof progForOrderLimit?.totalOrdersCompleted === "number"
+        ? Math.max(0, Math.floor(progForOrderLimit.totalOrdersCompleted))
+        : 0;
+    fieldProgress = normalizeFieldProgressFromStorage(g.fieldProgress, grid, ordersHint);
   }
   const inferredZone = isActiveZone(g.playZone) ? g.playZone : inferPlayZoneFromGrid(grid);
+  const lastEnergyRegenAt =
+    typeof g.lastEnergyRegenAt === "number" && Number.isFinite(g.lastEnergyRegenAt)
+      ? g.lastEnergyRegenAt
+      : Date.now();
   return {
     grid,
+    fieldProgress,
     energy: typeof g.energy === "number" ? g.energy : INITIAL_ENERGY,
     maxEnergy: typeof g.maxEnergy === "number" ? g.maxEnergy : INITIAL_ENERGY,
+    lastEnergyRegenAt,
     orders: (() => {
       const rawO = Array.isArray(g.orders) ? normalizeOrdersFromStorage(g.orders) : [];
       const limitProg: Pick<
         ProgressionState,
-        "minigameOrdersAtRoomRepair" | "purchasedUpgrades" | "level"
+        "minigameOrdersAtRoomRepair" | "purchasedUpgrades" | "level" | "totalOrdersCompleted"
       > = progForOrderLimit ?? {
         level: defaultLevel,
         purchasedUpgrades: [],
         minigameOrdersAtRoomRepair: {},
+        totalOrdersCompleted: 0,
       };
       let o =
         rawO.length > 0
           ? rawO
           : createInitialOrders(grid, inferredZone, defaultLevel, maxSeenItemLevel, limitProg);
       while (o.length < MAX_ACTIVE_ORDERS && canGenerateMinigameOrder(limitProg, inferredZone)) {
-        o.push(generateNewOrder(limitProg.level, maxSeenItemLevel, grid, inferredZone));
+        o.push(generateNewOrder(limitProg.level, maxSeenItemLevel, grid, inferredZone, o));
       }
       return o.slice(0, MAX_ACTIVE_ORDERS);
     })(),
@@ -466,6 +590,8 @@ export default function App() {
   const [cellMergePopIndex, setCellMergePopIndex] = useState<number | null>(null);
   /** Индексы соседей, только что очищенных от препятствия после merge (краткая анимация). */
   const [cellUnlockedFlashIndices, setCellUnlockedFlashIndices] = useState<number[]>([]);
+  /** Усиленная вспышка при открытии ящика с генератором. */
+  const [cellUnlockHeavyFlash, setCellUnlockHeavyFlash] = useState(false);
   const [cellShakePair, setCellShakePair] = useState<[number, number] | null>(null);
   const [coinFly, setCoinFly] = useState<CoinFlyState | null>(null);
   /** Нет эффективных ходов (слияние / заказ / спавн при энергии); UI мягкий, ввод не блокируем. */
@@ -528,8 +654,40 @@ export default function App() {
     setSelectedCell(null);
     setCellMergePopIndex(null);
     setCellUnlockedFlashIndices([]);
+    setCellUnlockHeavyFlash(false);
     setCellShakePair(null);
     setCoinFly(null);
+  }, []);
+
+  const handleWatchAdEnergy = useCallback(() => {
+    setState((s) =>
+      s ? { ...s, energy: Math.min(s.maxEnergy, s.energy + ENERGY_AD_REWARD) } : s
+    );
+    setRoomPurchaseToast(`+${ENERGY_AD_REWARD} энергии за просмотр рекламы`);
+    if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
+    purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 2800);
+  }, []);
+
+  const handleBuyEnergyForCoins = useCallback(() => {
+    if (!progStateRef.current) return;
+    const p = progStateRef.current;
+    if (p.coins < ENERGY_COIN_PACK_COST) {
+      setRoomPurchaseToast(`Нужно ${ENERGY_COIN_PACK_COST} монет`);
+      if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
+      purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 2200);
+      return;
+    }
+    const m = new ProgressionManager(p);
+    m.addCoins(-ENERGY_COIN_PACK_COST);
+    setProgState(m.getState());
+    setState((s) =>
+      s
+        ? { ...s, energy: Math.min(s.maxEnergy, s.energy + ENERGY_COIN_PACK_AMOUNT) }
+        : s
+    );
+    setRoomPurchaseToast(`+${ENERGY_COIN_PACK_AMOUNT} энергии за ${ENERGY_COIN_PACK_COST} монет`);
+    if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
+    purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 2800);
   }, []);
 
   /** Нет слияний, заказов, инструментов и выдачи с генератора. */
@@ -560,7 +718,7 @@ export default function App() {
       while (o.length < MAX_ACTIVE_ORDERS && canGenerateMinigameOrder(p, s.playZone) && guard < 12) {
         guard += 1;
         const maxSeen = bumpMaxSeenItemLevelFromGrid(p, grid).maxSeenItemLevel;
-        o.push(generateNewOrder(p.level, maxSeen, grid, s.playZone));
+        o.push(generateNewOrder(p.level, maxSeen, grid, s.playZone, o));
       }
       return o.length > 0 ? { ...s, orders: o } : s;
     });
@@ -577,8 +735,7 @@ export default function App() {
     const id = window.setInterval(() => {
       setState((s) => {
         if (!s || s.energy >= s.maxEnergy) return s;
-        const next = s.energy + 1;
-        return { ...s, energy: next };
+        return { ...s, energy: s.energy + 1, lastEnergyRegenAt: Date.now() };
       });
     }, ENERGY_REGEN_INTERVAL_MS);
     return () => window.clearInterval(id);
@@ -599,14 +756,16 @@ export default function App() {
       maxSeenItemLevel: 1,
       minigameOrdersAtRoomRepair: {},
     };
-    const startGrid = buildFreshPlayGrid("hall");
+    const { grid: startGrid, fieldProgress: startFieldProgress } = buildFreshPlayGrid("hall");
     const initialGameState: GameState = {
       grid: startGrid,
       energy: startEnergy,
       maxEnergy: startEnergy,
+      lastEnergyRegenAt: Date.now(),
       orders: createInitialOrders(startGrid, "hall", 1, 1, initialProgState),
       isFirstLaunch: true,
       playZone: "hall",
+      fieldProgress: startFieldProgress,
     };
     setProgState(initialProgState);
     setState(initialGameState);
@@ -673,12 +832,10 @@ export default function App() {
             hydrated.grid,
             baseProg
           );
+          const capped = applyEnergyCapsForProgress(hydrated, nextProg);
           setState({
-            ...hydrated,
-            energy: Math.min(
-              hydrated.maxEnergy,
-              hydrated.energy + energyFromChainRewards
-            ),
+            ...capped,
+            energy: Math.min(capped.maxEnergy, capped.energy + energyFromChainRewards),
           });
           setProgState(nextProg);
           setOrdersCompleted(
@@ -797,7 +954,13 @@ export default function App() {
         newGrid[from] = emptyGridCell();
         newGrid[to] = withSyncedItemMeta(itemGridCell(nextItem.id));
         const resultLevel = "level" in nextItem ? nextItem.level : 1;
-        const opened = openAdjacentBoxAfterMerge(newGrid, to, resultLevel, GRID_WIDTH, GRID_HEIGHT);
+        const opened = handleMergeFieldProgress(
+          newGrid,
+          state.fieldProgress,
+          resultLevel,
+          GRID_WIDTH,
+          GRID_HEIGHT
+        );
         newGrid = opened.grid;
 
         const manager = new ProgressionManager(progState);
@@ -817,9 +980,18 @@ export default function App() {
           const chName = chId ? ITEM_CHAINS[chId]?.name : null;
           setRoomPurchaseToast(
             chName
-              ? `Открыт источник «${chName}»! Предметы под паутиной обновились.`
-              : "Новый источник предметов открыт! Предметы под паутиной обновились."
+              ? `🎉 Новый источник предметов! Открыт «${chName}». Предметы под паутиной обновились.`
+              : "🎉 Новый источник предметов! Предметы под паутиной обновились."
           );
+          window.setTimeout(() => setRoomPurchaseToast(null), 3600);
+          if (opened.zoneJustCompleted) {
+            window.setTimeout(() => {
+              setRoomPurchaseToast(`Зона «${opened.zoneJustCompleted!.name}» полностью открыта!`);
+              window.setTimeout(() => setRoomPurchaseToast(null), 3200);
+            }, 3800);
+          }
+        } else if (opened.zoneJustCompleted) {
+          setRoomPurchaseToast(`Зона «${opened.zoneJustCompleted.name}» полностью открыта!`);
           window.setTimeout(() => setRoomPurchaseToast(null), 3200);
         }
         progAfter = bumpMaxSeenItemLevelFromGrid(progAfter, newGrid);
@@ -830,6 +1002,7 @@ export default function App() {
         setState({
           ...state,
           grid: newGrid,
+          fieldProgress: opened.fieldProgress,
           energy: Math.min(
             state.maxEnergy,
             (leveledUp ? state.maxEnergy : state.energy) + bulk.totalEnergyFromChains
@@ -842,8 +1015,13 @@ export default function App() {
         setCellMergePopIndex(to);
         window.setTimeout(() => setCellMergePopIndex(null), 350);
         if (opened.openedCellIndices.length > 0) {
+          const heavy = Boolean(opened.unlockedGeneratorItemId);
+          setCellUnlockHeavyFlash(heavy);
           setCellUnlockedFlashIndices(opened.openedCellIndices);
-          window.setTimeout(() => setCellUnlockedFlashIndices([]), 550);
+          window.setTimeout(() => {
+            setCellUnlockedFlashIndices([]);
+            setCellUnlockHeavyFlash(false);
+          }, heavy ? 920 : 450);
         }
         return;
       }
@@ -1014,6 +1192,7 @@ export default function App() {
     let partialSound = false;
     let fulfilledMeta: FulfilledMeta | null = null;
     let bumpGrid: GridCell[] | null = null;
+    let orderFieldOpen: MergeFieldProgressResult | null = null;
 
     flushSync(() => {
       setState((prev) => {
@@ -1055,7 +1234,9 @@ export default function App() {
         let afterCountProg = incrementMinigameOrderComplete(prog, prev.playZone);
         const maxSeenForOrder = bumpMaxSeenItemLevelFromGrid(afterCountProg, gridAfterPickup).maxSeenItemLevel;
         if (canGenerateMinigameOrder(afterCountProg, prev.playZone)) {
-          newOrders.push(generateNewOrder(afterCountProg.level, maxSeenForOrder, gridAfterPickup, prev.playZone));
+          newOrders.push(
+            generateNewOrder(afterCountProg.level, maxSeenForOrder, gridAfterPickup, prev.playZone, newOrders)
+          );
         }
 
         const manager = new ProgressionManager(afterCountProg);
@@ -1103,11 +1284,22 @@ export default function App() {
           anyLevelUp,
         };
 
+        const fieldOrder = handleOrderFieldProgress(
+          gridAfterPickup,
+          prev.fieldProgress,
+          GRID_WIDTH,
+          GRID_HEIGHT
+        );
+        orderFieldOpen = fieldOrder;
+
         return {
           ...prev,
-          grid: gridAfterPickup,
+          grid: fieldOrder.grid,
+          fieldProgress: fieldOrder.fieldProgress,
           orders: newOrders,
-          energy: anyLevelUp ? prev.maxEnergy : prev.energy,
+          energy: anyLevelUp
+            ? prev.maxEnergy
+            : Math.min(prev.maxEnergy, prev.energy + ENERGY_ORDER_COMPLETE_BONUS),
         };
       });
     });
@@ -1121,6 +1313,38 @@ export default function App() {
     }
 
     if (!fulfilledMeta) return;
+
+    if (orderFieldOpen) {
+      if (orderFieldOpen.unlockedGeneratorItemId) {
+        const gDef = ALL_ITEMS[orderFieldOpen.unlockedGeneratorItemId];
+        const chId = gDef && itemIsGenerator(gDef) ? gDef.spawnsChainId : null;
+        const chName = chId ? ITEM_CHAINS[chId]?.name : null;
+        setRoomPurchaseToast(
+          chName
+            ? `🎉 Новый источник предметов! Открыт «${chName}». Предметы под паутиной обновились.`
+            : "🎉 Новый источник предметов! Предметы под паутиной обновились."
+        );
+        window.setTimeout(() => setRoomPurchaseToast(null), 3600);
+        if (orderFieldOpen.zoneJustCompleted) {
+          window.setTimeout(() => {
+            setRoomPurchaseToast(`Зона «${orderFieldOpen.zoneJustCompleted!.name}» полностью открыта!`);
+            window.setTimeout(() => setRoomPurchaseToast(null), 3200);
+          }, 3800);
+        }
+      } else if (orderFieldOpen.zoneJustCompleted) {
+        setRoomPurchaseToast(`Зона «${orderFieldOpen.zoneJustCompleted.name}» полностью открыта!`);
+        window.setTimeout(() => setRoomPurchaseToast(null), 3200);
+      }
+      if (orderFieldOpen.openedCellIndices.length > 0) {
+        const heavy = Boolean(orderFieldOpen.unlockedGeneratorItemId);
+        setCellUnlockHeavyFlash(heavy);
+        setCellUnlockedFlashIndices(orderFieldOpen.openedCellIndices);
+        window.setTimeout(() => {
+          setCellUnlockedFlashIndices([]);
+          setCellUnlockHeavyFlash(false);
+        }, heavy ? 920 : 450);
+      }
+    }
 
     if (fulfilledMeta.orderCoinDoubled) {
       setShowOrderCoinBonus(true);
@@ -1220,7 +1444,7 @@ export default function App() {
           const o = [...s.orders];
           while (o.length < MAX_ACTIVE_ORDERS && canGenerateMinigameOrder(nextProg, s.playZone)) {
             const maxSeen = bumpMaxSeenItemLevelFromGrid(nextProg, s.grid).maxSeenItemLevel;
-            o.push(generateNewOrder(nextProg.level, maxSeen, s.grid, s.playZone));
+            o.push(generateNewOrder(nextProg.level, maxSeen, s.grid, s.playZone, o));
           }
           orders = o;
         }
@@ -1453,6 +1677,7 @@ export default function App() {
             coins={progState.coins}
             xpProgressPercent={progress}
             unlockedZones={hubUnlockedZones}
+            purchasedUpgrades={progState.purchasedUpgrades}
             repairNudgeZone={hubHighlightZone}
             hubOrdersToast={hubOrdersBackToast}
             pulsePlayButton={hubPulsePlayButton}
@@ -1544,6 +1769,7 @@ export default function App() {
           onOpenTutorial={() => setShowTutorial(true)}
           mergePopIndex={cellMergePopIndex}
           cellUnlockedFlashIndices={cellUnlockedFlashIndices}
+          cellUnlockHeavyFlash={cellUnlockHeavyFlash}
           cellShakePair={cellShakePair}
           coinFly={coinFly}
           gridWidth={GRID_WIDTH}
@@ -1562,6 +1788,8 @@ export default function App() {
           onSessionExitHome={handleSessionExitHome}
           isNoMoves={isNoMoves}
           onNoMovesExitHome={handleNoMovesExitHome}
+          onWatchAdEnergy={handleWatchAdEnergy}
+          onBuyEnergyForCoins={handleBuyEnergyForCoins}
         />
         </div>
       )}

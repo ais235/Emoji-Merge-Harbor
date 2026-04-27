@@ -1,5 +1,5 @@
 /**
- * Стартовое поле: центр — генератор и пустые клетки, кольцо — cobweb (ур.1), остальное — box.
+ * Стартовое поле: зона 0 (центр) — генератор и пустые клетки; дальше концентрические зоны из ящиков.
  */
 
 import type { ActiveZone, GridCell, ItemId } from "../types";
@@ -10,14 +10,11 @@ import {
   itemIsGenerator,
   itemIsResourcePickup,
 } from "../types";
-import {
-  boxGridCell,
-  cobwebGridCell,
-  emptyGridCell,
-  generatorBoxGridCell,
-  generatorGridCell,
-} from "./gridCells";
+import type { FieldProgressState } from "../types";
+import { boxGridCell, emptyGridCell, generatorBoxGridCell, generatorGridCell, hintBoxGridCell } from "./gridCells";
 import { hiddenSessionGeneratorIdsForZone } from "./sessionGridProgress";
+import { buildAllUnlockQueues, FIELD_CONSTANTS, fieldZoneEntry, gridCenterIndex } from "./fieldZones";
+import { emptyFieldProgress } from "./mergeFieldProgress";
 
 function firstLevelOneItemIdForZone(zone: ActiveZone): string | null {
   const ch = ITEM_CHAINS[mergeChainIdForZone(zone)];
@@ -38,8 +35,10 @@ function mergeableChainIdsOrdered(primaryChainId: string): string[] {
   return [primaryChainId, ...rest];
 }
 
-/** Предмет цепочки не выше `targetLevel` (если цепочка короче — максимально возможный уровень). */
-function boxLootFromChain(chainId: string, targetLevel: number): { boxItem: ItemId; boxItemLevel: number; boxChainId: string } | null {
+function boxLootFromChain(
+  chainId: string,
+  targetLevel: number
+): { boxItem: ItemId; boxItemLevel: number; boxChainId: string } | null {
   const ch = ITEM_CHAINS[chainId];
   if (!ch) return null;
   const mergeables = ch.items.filter(
@@ -57,15 +56,10 @@ function boxLootFromChain(chainId: string, targetLevel: number): { boxItem: Item
   return first ? { boxItem: first.id, boxItemLevel: first.level, boxChainId: chainId } : null;
 }
 
-/**
- * Ящики начинаются с manhattan > 3. `depth = manhattan - 4` — «кольцо» относительно центра:
- * ближе — чаще ур.1 и уже пул цепочек, дальше — больше цепочек и выше уровень.
- */
 function assignBoxCell(manhattan: number, orderedChains: string[]): GridCell {
   const depth = Math.max(0, manhattan - 4);
   const poolSize = Math.min(orderedChains.length, 1 + Math.ceil((depth + 1) / 2));
   const pool = orderedChains.slice(0, Math.max(1, poolSize));
-  /** Дальние кольца — более высокий уровень лута (до 5). */
   const level = Math.min(5, 1 + Math.floor(depth / 2));
   const chainId = pool[Math.floor(Math.random() * pool.length)] ?? orderedChains[0];
   const loot = boxLootFromChain(chainId, level);
@@ -74,75 +68,162 @@ function assignBoxCell(manhattan: number, orderedChains: string[]): GridCell {
   return fb ? boxGridCell(fb) : boxGridCell();
 }
 
-export function buildInitialGrid(width: number, height: number, zone: ActiveZone): GridCell[] {
+function manhattan(idx: number, centerIdx: number, width: number): number {
+  const c = idx % width;
+  const r = Math.floor(idx / width);
+  const cc = centerIdx % width;
+  const cr = Math.floor(centerIdx / width);
+  return Math.abs(c - cc) + Math.abs(r - cr);
+}
+
+function pickGeneratorBoxIndex(
+  grid: GridCell[],
+  width: number,
+  height: number,
+  centerIdx: number,
+  targetDist: number,
+  exclude: Set<number>
+): number | null {
+  const candidates: number[] = [];
+  for (let i = 0; i < grid.length; i++) {
+    if (exclude.has(i)) continue;
+    const c = grid[i]!;
+    if (c.cellType !== "box" || c.boxIsGenerator) continue;
+    if (manhattan(i, centerIdx, width) === targetDist) candidates.push(i);
+  }
+  candidates.sort((a, b) => a - b);
+  return candidates[0] ?? null;
+}
+
+function maxManhattanPresentInZone(
+  width: number,
+  height: number,
+  centerIdx: number,
+  distMin: number,
+  distMax: number
+): number {
+  let mx = -1;
+  const n = width * height;
+  for (let i = 0; i < n; i++) {
+    const d = manhattan(i, centerIdx, width);
+    if (d < distMin || d > distMax) continue;
+    mx = Math.max(mx, d);
+  }
+  return mx;
+}
+
+function applyHintBoxes(
+  grid: GridCell[],
+  width: number,
+  height: number,
+  centerIdx: number
+): void {
+  const hintCount = FIELD_CONSTANTS.HINT_BOX_COUNT_PER_ZONE;
+  for (const zid of ["zone_1", "zone_2", "zone_3"] as const) {
+    const z = fieldZoneEntry(zid);
+    const shellD = maxManhattanPresentInZone(width, height, centerIdx, z.distMin, z.distMax);
+    if (shellD < 0) continue;
+    const outer: number[] = [];
+    for (let i = 0; i < grid.length; i++) {
+      const d = manhattan(i, centerIdx, width);
+      if (d !== shellD) continue;
+      const c = grid[i]!;
+      if (c.cellType !== "box" || c.boxIsGenerator) continue;
+      if (!c.boxItem || !c.boxChainId || c.boxItemLevel < 1) continue;
+      outer.push(i);
+    }
+    outer.sort((a, b) => a - b);
+    for (const k of outer.slice(0, hintCount)) {
+      const c = grid[k]!;
+      if (c.boxItem && c.boxChainId && c.boxItemLevel >= 1) {
+        grid[k] = hintBoxGridCell({
+          boxItem: c.boxItem,
+          boxItemLevel: c.boxItemLevel,
+          boxChainId: c.boxChainId,
+        });
+      }
+    }
+  }
+}
+
+export interface BuildInitialGridResult {
+  grid: GridCell[];
+  fieldProgress: FieldProgressState;
+}
+
+export function buildInitialGrid(width: number, height: number, zone: ActiveZone): BuildInitialGridResult {
+  const centerIdx = gridCenterIndex(width, height);
   const centerCol = Math.floor(width / 2);
   const centerRow = Math.floor(height / 2);
   const genId = generatorItemIdForZone(zone);
   const chainId = mergeChainIdForZone(zone);
   const cobwebItemId = firstLevelOneItemIdForZone(zone);
   const orderedChains = mergeableChainIdsOrdered(chainId);
+
   if (!cobwebItemId) {
     const grid: GridCell[] = [];
     for (let i = 0; i < width * height; i++) grid.push(emptyGridCell());
-    const gi = centerRow * width + centerCol;
-    grid[gi] = generatorGridCell(genId);
-    return grid;
+    grid[centerIdx] = generatorGridCell(genId);
+    const fp = { ...emptyFieldProgress(), unlockQueues: buildAllUnlockQueues(grid, width, height, centerIdx) };
+    return { grid, fieldProgress: fp };
   }
 
   const grid: GridCell[] = [];
   for (let r = 0; r < height; r++) {
     for (let c = 0; c < width; c++) {
-      const manhattan = Math.abs(c - centerCol) + Math.abs(r - centerRow);
-      if (manhattan === 0) {
+      const m = Math.abs(c - centerCol) + Math.abs(r - centerRow);
+      if (m === 0) {
         grid.push(generatorGridCell(genId));
-      } else if (manhattan <= 2) {
+      } else if (m <= 2) {
         grid.push(emptyGridCell());
-      } else if (manhattan === 3) {
-        const ringLoot = boxLootFromChain(chainId, 1);
-        if (ringLoot) {
-          grid.push(cobwebGridCell(ringLoot.boxItem, ringLoot.boxItemLevel, ringLoot.boxChainId));
-        } else {
-          grid.push(cobwebGridCell(cobwebItemId, 1, chainId));
-        }
       } else {
-        grid.push(assignBoxCell(manhattan, orderedChains));
+        grid.push(assignBoxCell(m, orderedChains));
       }
     }
   }
 
   const hiddenGens = hiddenSessionGeneratorIdsForZone(zone);
-  const centerC = centerCol;
-  const centerR = centerRow;
-  const boxIndicesByManhattan = (minM: number, maxM: number): number[] => {
-    const out: number[] = [];
-    for (let i = 0; i < grid.length; i++) {
-      if (grid[i]!.cellType !== "box") continue;
-      const c = i % width;
-      const r = Math.floor(i / width);
-      const m = Math.abs(c - centerC) + Math.abs(r - centerR);
-      if (m >= minM && m <= maxM) out.push(i);
-    }
-    return out;
-  };
-
+  const exclude = new Set<number>();
   let firstGeneratorBoxIndex: number | null = null;
+
   if (hiddenGens[0]) {
-    const poolC = boxIndicesByManhattan(5, 6);
-    const idx = poolC[Math.floor(Math.random() * poolC.length)];
-    if (idx !== undefined) {
+    const idx =
+      pickGeneratorBoxIndex(grid, width, height, centerIdx, FIELD_CONSTANTS.GENERATOR_BOX_DIST_ZONE2, exclude) ??
+      pickGeneratorBoxIndex(grid, width, height, centerIdx, 5, exclude) ??
+      pickGeneratorBoxIndex(grid, width, height, centerIdx, 6, exclude);
+    if (idx != null) {
       grid[idx] = generatorBoxGridCell(hiddenGens[0]!);
+      exclude.add(idx);
       firstGeneratorBoxIndex = idx;
     }
   }
+
   if (hiddenGens[1]) {
-    const poolD = boxIndicesByManhattan(7, 8).filter((i) => i !== firstGeneratorBoxIndex);
-    let idx = poolD[Math.floor(Math.random() * poolD.length)];
-    if (idx === undefined) {
-      const wide = boxIndicesByManhattan(5, 9).filter((i) => i !== firstGeneratorBoxIndex);
-      idx = wide[Math.floor(Math.random() * wide.length)]!;
+    let idx =
+      pickGeneratorBoxIndex(grid, width, height, centerIdx, FIELD_CONSTANTS.GENERATOR_BOX_DIST_ZONE3, exclude) ??
+      pickGeneratorBoxIndex(grid, width, height, centerIdx, 7, exclude) ??
+      pickGeneratorBoxIndex(grid, width, height, centerIdx, 8, exclude);
+    if (idx == null || idx === firstGeneratorBoxIndex) {
+      const wide: number[] = [];
+      for (let i = 0; i < grid.length; i++) {
+        if (exclude.has(i)) continue;
+        const c = grid[i]!;
+        if (c.cellType !== "box" || c.boxIsGenerator) continue;
+        const d = manhattan(i, centerIdx, width);
+        if (d >= 7) wide.push(i);
+      }
+      wide.sort((a, b) => a - b);
+      idx = wide.find((i) => i !== firstGeneratorBoxIndex) ?? null;
     }
-    if (idx !== undefined) grid[idx] = generatorBoxGridCell(hiddenGens[1]!);
+    if (idx != null) grid[idx] = generatorBoxGridCell(hiddenGens[1]!);
   }
 
-  return grid;
+  applyHintBoxes(grid, width, height, centerIdx);
+
+  const fieldProgress: FieldProgressState = {
+    ...emptyFieldProgress(),
+    unlockQueues: buildAllUnlockQueues(grid, width, height, centerIdx),
+  };
+
+  return { grid, fieldProgress };
 }

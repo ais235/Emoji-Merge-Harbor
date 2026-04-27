@@ -22,18 +22,23 @@ export type Item = ItemId;
 
 /**
  * Тип клетки поля (Merge Hotel Empire).
- * - box — закрытый ящик; cobweb — предмет под паутиной (виден, не тянется как источник).
+ * - box — закрытый ящик; hint_box — ящик-намёк на границе зоны; cobweb — предмет под паутиной.
  */
-export type CellType = "empty" | "item" | "generator" | "box" | "cobweb";
+export type CellType = "empty" | "item" | "generator" | "box" | "hint_box" | "cobweb";
 
 /** Открытые клетки: ходы, генератор, выдача заказов только с `item`. */
 export function isOpenCellType(t: CellType): boolean {
   return t === "empty" || t === "item" || t === "generator";
 }
 
+/** Закрытый ящик или ящик-намёк (открываются зональной прогрессией). */
+export function isSealedFieldCellType(t: CellType): boolean {
+  return t === "box" || t === "hint_box";
+}
+
 /** Нельзя положить предмет / обменять (ящик). Паутина обрабатывается отдельно при слиянии. */
 export function isBlockedCellType(t: CellType): boolean {
-  return t === "box";
+  return t === "box" || t === "hint_box";
 }
 
 /** @deprecated Используйте isBlockedCellType(cell.cellType) или !isOpenCellType. */
@@ -48,7 +53,7 @@ export interface GridCell {
   itemLevel: number;
   /** Цепочка слияния (`ITEM_CHAINS`), для генератора — `spawnsChainId`. */
   chainId: string | null;
-  /** Содержимое закрытого ящика (скрыто до открытия слиянием). Только для `cellType === "box"`. */
+  /** Содержимое закрытого ящика (скрыто до открытия). Для `box` и `hint_box`. */
   boxItem: Item | null;
   boxItemLevel: number;
   boxChainId: string | null;
@@ -56,6 +61,10 @@ export interface GridCell {
   boxIsGenerator: boolean;
   /** Id предмета-генератора из `ALL_ITEMS` (как у стартовой клетки). */
   boxGeneratorId: string | null;
+}
+
+export function isSealedFieldCell(cell: GridCell): boolean {
+  return isSealedFieldCellType(cell.cellType);
 }
 
 export function isCobwebUnknownPlaceholder(cell: GridCell): boolean {
@@ -294,15 +303,31 @@ export interface ProgressionState {
   minigameOrdersAtRoomRepair: Partial<Record<ActiveZone, number>>;
 }
 
+/** Прогресс зонального открытия поля (очереди, слияния для зоны 1, заказы для зон 2–3). */
+export interface FieldProgressState {
+  unlockQueues: {
+    zone_1: number[];
+    zone_2: number[];
+    zone_3: number[];
+  };
+  zone1MergeProgress: number;
+  /** Выполненных заказов миниигры (счётчик для открытия зон 2 и 3). */
+  ordersForFieldProgress: number;
+}
+
 /** Игровая сцена (поле, энергия, заказы). coins / level / xp — только в ProgressionState. */
 export interface GameState {
   grid: GridCell[];
   energy: number;
   maxEnergy: number;
+  /** Время последнего +1 энергии по таймеру (для отображения «до следующей»). */
+  lastEnergyRegenAt: number;
   orders: Order[];
   isFirstLaunch: boolean;
   /** Комната, с которой открыта текущая сессия поля (генератор и лут с грязи). */
   playZone: ActiveZone;
+  /** Очереди открытия ящиков по зонам и накопленные слияния для темпа. */
+  fieldProgress: FieldProgressState;
 }
 
 const FRUIT_CHAIN_LEN = 7;

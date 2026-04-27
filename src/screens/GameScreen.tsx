@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Zap, Coins, Star, CircleAlert, HelpCircle } from "lucide-react";
 import {
@@ -23,6 +23,12 @@ import {
 } from "../types";
 import GameSelectionInfoModal from "../components/GameSelectionInfoModal";
 import OrderItemInfoModal from "../components/OrderItemInfoModal";
+import {
+  ENERGY_AD_REWARD,
+  ENERGY_COIN_PACK_AMOUNT,
+  ENERGY_COIN_PACK_COST,
+  ENERGY_REGEN_INTERVAL_MS,
+} from "../gameBalance";
 
 /**
  * Один заказчик на заказ (эмодзи по роли).
@@ -110,6 +116,8 @@ export interface GameScreenProps {
   mergePopIndex: number | null;
   /** Краткая подсветка соседних клеток после снятия препятствия */
   cellUnlockedFlashIndices?: number[];
+  /** Усиленная вспышка (открытие ящика с генератором). */
+  cellUnlockHeavyFlash?: boolean;
   cellShakePair: [number, number] | null;
   coinFly: CoinFlyState | null;
   gridWidth: number;
@@ -129,6 +137,10 @@ export interface GameScreenProps {
   onSessionExitHome: () => void;
   isNoMoves: boolean;
   onNoMovesExitHome: () => void;
+  /** Заглушка рекламы: +энергия (в проде — SDK). */
+  onWatchAdEnergy: () => void;
+  /** Купить энергию за монеты. */
+  onBuyEnergyForCoins: () => void;
 }
 
 export default function GameScreen({
@@ -146,6 +158,7 @@ export default function GameScreen({
   selectedCell,
   mergePopIndex,
   cellUnlockedFlashIndices = [],
+  cellUnlockHeavyFlash = false,
   cellShakePair,
   coinFly,
   gridWidth,
@@ -160,6 +173,8 @@ export default function GameScreen({
   onSessionExitHome,
   isNoMoves,
   onNoMovesExitHome,
+  onWatchAdEnergy,
+  onBuyEnergyForCoins,
 }: GameScreenProps) {
   const [selectionInfoOpen, setSelectionInfoOpen] = useState(false);
   const [orderItemInfoId, setOrderItemInfoId] = useState<string | null>(null);
@@ -176,6 +191,21 @@ export default function GameScreen({
     window.addEventListener("resize", calc);
     return () => window.removeEventListener("resize", calc);
   }, [gridWidth]);
+
+  const [energyUiTick, setEnergyUiTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setEnergyUiTick((n) => n + 1), 15_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const energyRegenHint = useMemo(() => {
+    void energyUiTick;
+    if (state.energy >= state.maxEnergy) return "";
+    const elapsed = Date.now() - state.lastEnergyRegenAt;
+    const msUntil = ENERGY_REGEN_INTERVAL_MS - (elapsed % ENERGY_REGEN_INTERVAL_MS);
+    const minutesLeft = Math.max(1, Math.ceil(msUntil / 60_000));
+    return `+1 через ${minutesLeft}м`;
+  }, [state.energy, state.maxEnergy, state.lastEnergyRegenAt, energyUiTick]);
 
   const roomOrderRatio =
     maxMinigameOrdersAtRoom > 0 ? minigameOrdersCompletedAtRoom / maxMinigameOrdersAtRoom : 0;
@@ -366,12 +396,27 @@ export default function GameScreen({
             ×2 бонус!
           </div>
         ) : null}
-        <div className="w-full rounded-xl border border-gray-100 bg-white p-2 shadow-sm flex justify-between items-center">
-          <div className="flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-2 py-1">
-            <Zap className="h-3.5 w-3.5 fill-blue-500 text-blue-500" />
-            <span className="text-xs font-bold text-blue-700">
-              {state.energy}/{state.maxEnergy}
-            </span>
+        <div className="w-full rounded-xl border border-gray-100 bg-white p-2 shadow-sm flex justify-between items-center gap-1">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <div className="flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-2 py-1">
+              <Zap className="h-3.5 w-3.5 shrink-0 fill-blue-500 text-blue-500" />
+              <span className="text-xs font-bold tabular-nums text-blue-700">
+                {state.energy}/{state.maxEnergy}
+              </span>
+            </div>
+            {energyRegenHint ? (
+              <span className="pl-0.5 text-[9px] font-semibold text-blue-500/90">{energyRegenHint}</span>
+            ) : null}
+            {state.energy < state.maxEnergy ? (
+              <button
+                type="button"
+                onClick={onBuyEnergyForCoins}
+                disabled={progState.coins < ENERGY_COIN_PACK_COST}
+                className="max-w-[9.5rem] rounded-md border border-amber-200/80 bg-amber-50/90 px-1.5 py-0.5 text-left text-[8px] font-bold leading-tight text-amber-900 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                +{ENERGY_COIN_PACK_AMOUNT} за {ENERGY_COIN_PACK_COST} монет
+              </button>
+            ) : null}
           </div>
           <div className="flex flex-1 flex-col items-center px-2">
             <div className="mb-0.5 flex items-center gap-1">
@@ -595,7 +640,8 @@ export default function GameScreen({
             {state.grid.map((cell, index) => {
               const itemId = cell.item;
               const item = itemId ? ALL_ITEMS[itemId] : null;
-              const isBox = cell.cellType === "box";
+              const isBox = cell.cellType === "box" || cell.cellType === "hint_box";
+              const isHintBox = cell.cellType === "hint_box";
               const isCobweb = cell.cellType === "cobweb";
               const isBlocked = isBlockedCellType(cell.cellType);
               const isSelected = selectedCell === index;
@@ -604,6 +650,7 @@ export default function GameScreen({
                 (cellShakePair[0] === index || cellShakePair[1] === index);
               const isDragSource = dragGhost?.from === index;
               const isUnlockFlash = cellUnlockedFlashIndices.includes(index);
+              const unlockFlashStrong = cellUnlockHeavyFlash && isUnlockFlash;
               const canDragFrom = cellAllowsGridDragSource(cell);
               const isGen = Boolean(item && itemIsGenerator(item));
               const genBlocked = isGen && state.energy <= 0;
@@ -628,12 +675,14 @@ export default function GameScreen({
               const cellClasses = [
                 "game-grid-cell relative flex h-full w-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md transition-colors duration-200",
                 isBox
-                  ? "cell-box cursor-default"
+                  ? isHintBox
+                    ? "cell-hint-box cursor-default"
+                    : "cell-box cursor-default"
                   : isCobweb
                     ? "cell-cobweb cursor-default"
                     : `${isGen && genBlocked ? "cursor-not-allowed" : "cursor-pointer"} ${isSelected ? "cell-selected bg-blue-50" : isGen ? (genBlocked ? "cell-is-generator cell-generator-depleted" : "cell-is-generator") : isResPickup ? (resIsCoins ? "cell-resource-coins" : "cell-resource-energy") : "bg-white/50 hover:bg-white/80"}`,
                 mergePopIndex === index ? "cell-merge-pop" : "",
-                isUnlockFlash ? "cell-unlocked" : "",
+                isUnlockFlash ? (unlockFlashStrong ? "cell-unlocked cell-unlocked-strong" : "cell-unlocked") : "",
                 isShaking ? "cell-shake" : "",
                 isDragSource ? "opacity-45" : "",
                 canDragFrom ? "touch-none select-none" : "",
@@ -675,9 +724,19 @@ export default function GameScreen({
                   {isBox ? (
                     <>
                       <div
-                        className="pointer-events-none absolute inset-0 z-[1] rounded-md bg-[#C4A882] shadow-[inset_0_0_0_2px_rgba(100,75,45,0.4)]"
+                        className={`pointer-events-none absolute inset-0 z-[1] rounded-md shadow-[inset_0_0_0_2px_rgba(100,75,45,0.4)] ${
+                          isHintBox ? "bg-[#D8C9A8]" : "bg-[#C4A882]"
+                        }`}
                         aria-hidden
                       />
+                      {isHintBox ? (
+                        <span
+                          className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center text-lg font-black text-amber-900/55"
+                          aria-hidden
+                        >
+                          ?
+                        </span>
+                      ) : null}
                       {cell.boxIsGenerator ? (
                         <span
                           className="pointer-events-none absolute right-0.5 top-0.5 z-[2] text-[10px] leading-none drop-shadow-sm"
@@ -707,7 +766,7 @@ export default function GameScreen({
                     <AnimatePresence mode="popLayout">
                       {item && (
                         <motion.span
-                          key={`${itemId}-${index}`}
+                          key={`${index}-${cell.cellType}-${itemId}`}
                           initial={{
                             scale: 0,
                             opacity: 0,
@@ -777,6 +836,21 @@ export default function GameScreen({
               );
             })}
           </div>
+          {!devMode && state.energy === 0 ? (
+            <div className="absolute inset-0 z-[25] flex flex-col items-center justify-center rounded-[1rem] bg-black/50 px-3 text-center backdrop-blur-[1px]">
+              <span className="mb-2 text-sm font-black text-white">Энергия закончилась</span>
+              <button
+                type="button"
+                onClick={onWatchAdEnergy}
+                className="mb-2 rounded-xl bg-yellow-400 px-4 py-2.5 text-sm font-black text-gray-900 shadow-lg active:scale-[0.98]"
+              >
+                Смотреть рекламу → +{ENERGY_AD_REWARD} ⚡
+              </button>
+              <span className="max-w-[220px] text-[11px] leading-snug text-white/80">
+                Или подождите: +1 энергии каждые 3 минуты
+              </span>
+            </div>
+          ) : null}
           {dragGhost ? (
             <div
               aria-hidden
@@ -905,8 +979,33 @@ export default function GameScreen({
         .cell-unlocked {
           animation: cell-unlock-flash 0.3s ease-out forwards;
         }
+        @keyframes cell-unlock-flash-strong {
+          0% {
+            transform: scale(1);
+            filter: brightness(1);
+            box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
+          }
+          40% {
+            transform: scale(1.1);
+            filter: brightness(1.35);
+            box-shadow:
+              0 0 22px 4px rgba(253, 224, 71, 0.95),
+              inset 0 0 24px rgba(255, 255, 255, 0.55);
+          }
+          100% {
+            transform: scale(1);
+            filter: brightness(1);
+            box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
+          }
+        }
+        .cell-unlocked-strong {
+          animation: cell-unlock-flash-strong 0.85s ease-out forwards;
+        }
         .cell-box {
           background: #c4a882;
+        }
+        .cell-hint-box {
+          background: #d8c9a8;
         }
         .cell-cobweb {
           background: linear-gradient(165deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.92));

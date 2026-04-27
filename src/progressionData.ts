@@ -1,4 +1,6 @@
 import type { ActiveZone, LevelConfig, Upgrade, UpgradeZoneId } from "./types";
+import { progressZoneId } from "./types";
+import { getRoomVisual } from "./story/roomData";
 
 /** Зоны на хабе «Дом»: id экрана, отображение, уровень открытия (совпадает с `unlockedZones` через progressZoneId). */
 export const HUB_ZONES: {
@@ -256,3 +258,20 @@ export const META_COIN_UPGRADES: string[] = [
   "meta_dirty_drop_bonus",
   "meta_free_spawn",
 ];
+
+/** Куплено предметов интерьера комнаты / всего по сцене (слои) или по списку апгрейдов зоны. */
+export function roomFurnitureProgress(
+  zoneId: ActiveZone,
+  purchasedUpgradeIds: string[]
+): { bought: number; total: number } {
+  const visual = getRoomVisual(zoneId);
+  const layers = visual?.layers ?? [];
+  if (layers.length > 0) {
+    const bought = layers.filter((l) => purchasedUpgradeIds.includes(l.upgradeId)).length;
+    return { bought, total: layers.length };
+  }
+  const pid = progressZoneId(zoneId);
+  const list = UPGRADES.filter((u) => u.zone === pid);
+  const bought = list.filter((u) => purchasedUpgradeIds.includes(u.id)).length;
+  return { bought, total: list.length };
+}

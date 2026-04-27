@@ -61,12 +61,19 @@ export function bumpMaxSeenItemLevelFromGrid(prog: ProgressionState, grid: GridC
   return { ...prog, maxSeenItemLevel: Math.max(prev, fromGrid) };
 }
 
+/** Нижняя граница уровня предмета в заказе по уровню игрока. */
+export function playerTierMinOrderItemLevel(playerLevel: number): number {
+  if (playerLevel < 3) return 1;
+  if (playerLevel < 7) return 2;
+  return 3;
+}
+
 /** Верхняя граница уровня предмета в заказе по уровню игрока (таблица дизайна). */
 export function playerTierMaxOrderItemLevel(playerLevel: number): number {
-  if (playerLevel < 5) return 1;
-  if (playerLevel < 10) return 2;
-  if (playerLevel < 20) return 3;
-  return 7;
+  if (playerLevel < 5) return 2;
+  if (playerLevel < 10) return 3;
+  if (playerLevel < 15) return 4;
+  return 5;
 }
 
 /** Сколько позиций в заказе по уровню игрока. */

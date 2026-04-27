@@ -8,7 +8,7 @@ import { Zap, Coins, Star } from "lucide-react";
 import { motion } from "motion/react";
 import type { ActiveZone, ReconstructionState } from "../types";
 import { progressZoneId } from "../types";
-import { HUB_ZONES } from "../progressionData";
+import { HUB_ZONES, roomFurnitureProgress } from "../progressionData";
 import ReconstructionPanel from "../components/ReconstructionPanel";
 
 export interface CafeHubScreenProps {
@@ -18,6 +18,8 @@ export interface CafeHubScreenProps {
   coins: number;
   xpProgressPercent: number;
   unlockedZones: string[];
+  /** Купленные id апгрейдов (для дроби предметов в комнате на карточке). */
+  purchasedUpgrades: string[];
   onNavigateRoom: (zone: ActiveZone) => void;
   dailyQuestCompleted: number;
   dailyQuestTotal: number;
@@ -43,6 +45,7 @@ export default function CafeHubScreen({
   coins,
   xpProgressPercent,
   unlockedZones,
+  purchasedUpgrades,
   onNavigateRoom,
   dailyQuestCompleted,
   dailyQuestTotal,
@@ -195,6 +198,7 @@ export default function CafeHubScreen({
             const key = progressZoneId(zone.id);
             const isOpen = unlockedZones.includes(key);
             const isRepairNudge = repairNudgeZone != null && zone.id === repairNudgeZone;
+            const { bought: furnBought, total: furnTotal } = roomFurnitureProgress(zone.id, purchasedUpgrades);
             return (
               <motion.div
                 key={zone.id}
@@ -218,7 +222,13 @@ export default function CafeHubScreen({
                   <div className="text-xs font-bold text-gray-900">{zone.displayName}</div>
                   <div className="text-[9px] text-gray-500">
                     {isOpen ? (
-                      <span className="text-green-600">Открыта</span>
+                      furnTotal > 0 ? (
+                        <span className="tabular-nums text-gray-600">
+                          Предметы: {furnBought}/{furnTotal}
+                        </span>
+                      ) : (
+                        <span className="text-green-600">Открыта</span>
+                      )
                     ) : (
                       <>🔒 Ур. {zone.unlockLevel}</>
                     )}

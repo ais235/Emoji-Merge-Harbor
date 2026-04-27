@@ -75,7 +75,7 @@ function poolForOpen(
   return pool;
 }
 
-/** Содержимое ящика после открытия с учётом уже активных генераторов. */
+/** Содержимое ящика или hint_box после открытия с учётом уже активных генераторов. */
 export function resolveOpenedBoxCell(box: GridCell, activeChainIds: Set<string>): GridCell {
   if (box.boxIsGenerator && box.boxGeneratorId) {
     return generatorGridCell(box.boxGeneratorId);

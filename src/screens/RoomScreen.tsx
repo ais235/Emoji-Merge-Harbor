@@ -4,6 +4,7 @@
  */
 
 import React, { useCallback, useLayoutEffect, useState } from "react";
+import { Coins } from "lucide-react";
 import RoomCanvas from "../components/RoomCanvas";
 import RoomLayoutEditorPanel from "../components/RoomLayoutEditorPanel";
 import { HUB_ZONES, UPGRADES } from "../progressionData";
@@ -97,7 +98,7 @@ export default function RoomScreen({
 
   return (
     <div className="mx-auto flex h-[100dvh] w-full max-w-[360px] flex-col overflow-hidden bg-[#F8F9FA] p-2 font-sans select-none">
-      <div className="mb-2 flex flex-shrink-0 items-center">
+      <div className="mb-2 flex flex-shrink-0 items-center justify-between gap-2">
         <button
           type="button"
           onClick={onBack}
@@ -105,6 +106,13 @@ export default function RoomScreen({
         >
           ← Назад
         </button>
+        <div
+          className="flex min-w-0 items-center gap-1.5 rounded-full border border-yellow-100 bg-yellow-50 px-2.5 py-1.5 shadow-sm"
+          title="Монеты (печенья) — всего сейчас"
+        >
+          <Coins className="h-3.5 w-3.5 shrink-0 fill-yellow-600 text-yellow-600" aria-hidden />
+          <span className="truncate text-xs font-black tabular-nums text-yellow-800">{progState.coins}</span>
+        </div>
       </div>
 
       <h1 className="mb-2 text-xl font-black text-gray-900">{zoneTitle(activeZone)}</h1>
