@@ -20,7 +20,8 @@ import {
   type CoinFlyState,
 } from "../types";
 import GameSelectionInfoModal from "../components/GameSelectionInfoModal";
-import { FieldDialogProvider } from "../components/FieldDialogPanel";
+import { FieldDialogProvider, useFieldDialog } from "../components/FieldDialogPanel";
+import { getFieldLine } from "../fieldDialogs";
 import { GameHeader } from "../components/GameHeader";
 import OrderItemInfoModal from "../components/OrderItemInfoModal";
 import MergeBurstParticles from "../components/MergeBurstParticles";
@@ -169,6 +170,98 @@ function GameScreenContent({
       return () => window.clearTimeout(t);
     }
   }, [roomOrderRatio, maxMinigameOrdersAtRoom]);
+
+  const { showPanel } = useFieldDialog();
+  const prevLevelForDialogRef = useRef(progState.level);
+  const enteredRoomZoneRef = useRef<string | null>(null);
+  const noMovesDialogShownRef = useRef(false);
+  const prevSessionOrderRatioRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (progState.level > prevLevelForDialogRef.current) {
+      prevLevelForDialogRef.current = progState.level;
+      const line = getFieldLine("level_up");
+      if (line) {
+        showPanel({
+          npc: line.npc,
+          emotion: "happy",
+          text: line.text,
+          duration: 4200,
+        });
+      }
+    }
+  }, [progState.level, showPanel]);
+
+  useEffect(() => {
+    const z = state.playZone;
+    if (enteredRoomZoneRef.current === z) return;
+    enteredRoomZoneRef.current = z;
+    const line = getFieldLine("room_enter", z);
+    if (line) {
+      showPanel({
+        npc: line.npc,
+        emotion: "neutral",
+        text: line.text,
+        duration: 4500,
+      });
+    }
+  }, [state.playZone, showPanel]);
+
+  useEffect(() => {
+    if (coinFly?.source !== "order") return;
+    const line = getFieldLine("order_delivered");
+    if (line) {
+      showPanel({
+        npc: line.npc,
+        emotion: "happy",
+        text: line.text,
+        duration: 3400,
+      });
+    }
+  }, [coinFly, showPanel]);
+
+  useEffect(() => {
+    if (!isNoMoves) {
+      noMovesDialogShownRef.current = false;
+      return;
+    }
+    if (noMovesDialogShownRef.current) return;
+    noMovesDialogShownRef.current = true;
+    const line = getFieldLine("no_moves");
+    if (line) {
+      showPanel({
+        npc: line.npc,
+        emotion: "worried",
+        text: line.text,
+        duration: 5200,
+      });
+    }
+  }, [isNoMoves, showPanel]);
+
+  const sessionOrderRatio =
+    maxMinigameOrdersAtRoom > 0
+      ? minigameOrdersCompletedAtRoom / maxMinigameOrdersAtRoom
+      : 0;
+  useEffect(() => {
+    if (maxMinigameOrdersAtRoom <= 0) return;
+    const prev = prevSessionOrderRatioRef.current;
+    if (prev === null) {
+      prevSessionOrderRatioRef.current = sessionOrderRatio;
+      return;
+    }
+    prevSessionOrderRatioRef.current = sessionOrderRatio;
+    if (sessionOrderRatio >= 1 && prev < 1) {
+      const line = getFieldLine("session_complete");
+      if (line) {
+        showPanel({
+          npc: line.npc,
+          emotion: "happy",
+          text: line.text,
+          duration: 5800,
+        });
+      }
+    }
+  }, [sessionOrderRatio, maxMinigameOrdersAtRoom, showPanel]);
 
   /** Актуальная сетка для нативных слушателей window (вне замыкания React). */
   const gridSnapshotRef = useRef(state.grid);
