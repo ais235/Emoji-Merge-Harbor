@@ -86,7 +86,8 @@ const STYLES = `
     background: rgba(22, 15, 8, 0.96);
     border-top: 2.5px solid var(--dm-color);
     display: flex;
-    align-items: flex-end;
+    align-items: stretch;
+    gap: 12px;
     padding-bottom: env(safe-area-inset-bottom, 10px);
     animation: dm-slide-up 0.3s cubic-bezier(.22,.68,0,1.1) forwards;
     min-height: 160px;
@@ -94,17 +95,15 @@ const STYLES = `
 
   .dm-avatar {
     flex-shrink: 0;
-    width: 90px;
-    height: 122px;
-    align-self: flex-end;
-    margin-left: 14px;
-    border-radius: 10px 10px 0 0;
-    border: 2px solid var(--dm-color);
-    border-bottom: none;
+    width: min(34vw, 118px);
+    align-self: stretch;
+    margin: 0;
+    border-radius: 0;
+    border: none;
     overflow: hidden;
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(0, 0, 0, 0.15);
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     justify-content: center;
     font-size: 50px;
     line-height: 1;
@@ -112,6 +111,7 @@ const STYLES = `
   .dm-avatar img {
     width: 100%;
     height: 100%;
+    min-height: 100%;
     object-fit: cover;
     object-position: top center;
     display: block;
@@ -119,10 +119,12 @@ const STYLES = `
 
   .dm-body {
     flex: 1;
-    padding: 14px 16px 16px 12px;
+    min-width: 0;
+    padding: 14px 4px 16px 16px;
     display: flex;
     flex-direction: column;
     gap: 6px;
+    justify-content: center;
   }
 
   .dm-name {
@@ -167,13 +169,6 @@ const STYLES = `
     background: rgba(255, 255, 255, 0.16);
   }
 
-  .dm-hint {
-    font-size: 11px;
-    color: rgba(255, 245, 235, 0.28);
-    align-self: flex-end;
-    margin-top: 4px;
-    font-family: ${FONT_UI};
-  }
 `;
 
 export interface DialogModalProps {
@@ -213,18 +208,6 @@ export default function DialogModal({ beat, onChoice, onDismiss }: DialogModalPr
           style={{ "--dm-color": npc.color } as React.CSSProperties}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="dm-avatar">
-            {avatarBroken ? (
-              <span className="flex h-full w-full items-center justify-center">{npc.avatarFallback}</span>
-            ) : (
-              <img
-                src={avatarSrc(beat.npc, beat.id)}
-                alt=""
-                onError={() => setAvatarBroken(true)}
-              />
-            )}
-          </div>
-
           <div className="dm-body">
             <div className="dm-name" id="story-dialog-name">
               {npc.name}
@@ -244,8 +227,18 @@ export default function DialogModal({ beat, onChoice, onDismiss }: DialogModalPr
                   </button>
                 ))}
               </div>
+            ) : null}
+          </div>
+
+          <div className="dm-avatar">
+            {avatarBroken ? (
+              <span className="flex h-full w-full items-center justify-center">{npc.avatarFallback}</span>
             ) : (
-              <div className="dm-hint">нажми, чтобы продолжить</div>
+              <img
+                src={avatarSrc(beat.npc, beat.id)}
+                alt=""
+                onError={() => setAvatarBroken(true)}
+              />
             )}
           </div>
         </div>

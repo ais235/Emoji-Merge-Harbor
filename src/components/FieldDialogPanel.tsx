@@ -87,8 +87,8 @@ const STYLES = `
     padding: 0 0 env(safe-area-inset-bottom, 8px);
     pointer-events: auto;
     display: flex;
-    align-items: flex-end;
-    gap: 0;
+    align-items: stretch;
+    gap: 12px;
     min-height: 148px;
     position: relative;
   }
@@ -97,19 +97,21 @@ const STYLES = `
 
   .vn-avatar {
     flex-shrink: 0;
-    width: 90px;
-    height: 120px;
-    align-self: flex-end;
-    margin-left: 14px;
-    border-radius: 10px 10px 0 0;
+    width: min(34vw, 118px);
+    align-self: stretch;
+    margin: 0;
+    border-radius: 0;
     overflow: hidden;
-    border: 2px solid var(--vn-color);
-    border-bottom: none;
-    background: rgba(255,255,255,0.05);
+    border: none;
+    background: rgba(0,0,0,0.15);
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
   }
   .vn-avatar img {
     width: 100%;
     height: 100%;
+    min-height: 100%;
     object-fit: cover;
     object-position: top center;
     display: block;
@@ -125,10 +127,12 @@ const STYLES = `
 
   .vn-body {
     flex: 1;
-    padding: 14px 16px 14px 14px;
+    min-width: 0;
+    padding: 14px 4px 14px 16px;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    justify-content: center;
   }
   .vn-name {
     font-size: 13px;
@@ -144,14 +148,6 @@ const STYLES = `
     color: rgba(255,245,235,0.95);
     font-family: ${FONT_UI};
   }
-  .vn-tap-hint {
-    font-size: 11px;
-    color: rgba(255,245,235,0.35);
-    align-self: flex-end;
-    margin-top: 4px;
-    font-family: ${FONT_UI};
-  }
-
   .vn-choices {
     display: flex;
     flex-direction: column;
@@ -254,20 +250,6 @@ function VNPanel({ line, visible, onClose, onAnimationEnd }: PanelProps) {
           aria-modal="true"
           aria-labelledby="vn-dialog-name"
         >
-          <div className="vn-avatar">
-            {imgOk ? (
-              <img
-                src={avatarSrc(line.npc, emo)}
-                alt=""
-                onError={() => setImgOk(false)}
-              />
-            ) : (
-              <div className="vn-avatar-emoji" aria-hidden>
-                {cfg.emoji}
-              </div>
-            )}
-          </div>
-
           <div className="vn-body">
             <div className="vn-name" id="vn-dialog-name">
               {cfg.name}
@@ -290,8 +272,20 @@ function VNPanel({ line, visible, onClose, onAnimationEnd }: PanelProps) {
                   </button>
                 ))}
               </div>
+            ) : null}
+          </div>
+
+          <div className="vn-avatar">
+            {imgOk ? (
+              <img
+                src={avatarSrc(line.npc, emo)}
+                alt=""
+                onError={() => setImgOk(false)}
+              />
             ) : (
-              <div className="vn-tap-hint">нажми чтобы закрыть</div>
+              <div className="vn-avatar-emoji" aria-hidden>
+                {cfg.emoji}
+              </div>
             )}
           </div>
         </div>
