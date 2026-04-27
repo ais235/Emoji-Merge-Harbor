@@ -20,14 +20,12 @@ import {
   type CoinFlyState,
 } from "../types";
 import GameSelectionInfoModal from "../components/GameSelectionInfoModal";
+import { FieldDialogProvider } from "../components/FieldDialogPanel";
 import { GameHeader } from "../components/GameHeader";
 import OrderItemInfoModal from "../components/OrderItemInfoModal";
 import MergeBurstParticles from "../components/MergeBurstParticles";
 import { OrderCard } from "../components/OrderCard";
-import {
-  ENERGY_AD_REWARD,
-  ENERGY_COIN_PACK_COST,
-} from "../gameBalance";
+import { ENERGY_AD_REWARD } from "../gameBalance";
 
 const GRID_DRAG_THRESHOLD_PX = 12;
 
@@ -101,11 +99,9 @@ export interface GameScreenProps {
   onNoMovesExitHome: () => void;
   /** Заглушка рекламы: +энергия (в проде — SDK). */
   onWatchAdEnergy: () => void;
-  /** Купить энергию за монеты. */
-  onBuyEnergyForCoins: () => void;
 }
 
-export default function GameScreen({
+function GameScreenContent({
   state,
   progState,
   showOrderCoinBonus,
@@ -138,7 +134,6 @@ export default function GameScreen({
   isNoMoves,
   onNoMovesExitHome,
   onWatchAdEnergy,
-  onBuyEnergyForCoins,
 }: GameScreenProps) {
   const [selectionInfoOpen, setSelectionInfoOpen] = useState(false);
   const [orderItemInfoId, setOrderItemInfoId] = useState<string | null>(null);
@@ -313,7 +308,6 @@ export default function GameScreen({
           </div>
         ) : null}
         <GameHeader
-          zone={state.playZone}
           energy={state.energy}
           maxEnergy={state.maxEnergy}
           msUntilNextEnergy={msUntilNextEnergy}
@@ -324,8 +318,6 @@ export default function GameScreen({
           ordersCompleted={minigameOrdersCompletedAtRoom}
           maxOrders={maxMinigameOrdersAtRoom}
           onGoHome={onGoHome}
-          onBuyEnergy={onBuyEnergyForCoins}
-          canAffordEnergy={progState.coins >= ENERGY_COIN_PACK_COST}
           soundOn={soundOn}
           onToggleSound={onToggleGameSound}
         />
@@ -697,5 +689,13 @@ export default function GameScreen({
       <MergeBurstParticles cellIndex={mergeBurstCellIndex} />
       </div>
     </div>
+  );
+}
+
+export default function GameScreen(props: GameScreenProps) {
+  return (
+    <FieldDialogProvider>
+      <GameScreenContent {...props} />
+    </FieldDialogProvider>
   );
 }

@@ -97,8 +97,6 @@ import {
 } from "./utils/sessionGridProgress";
 import {
   ENERGY_AD_REWARD,
-  ENERGY_COIN_PACK_AMOUNT,
-  ENERGY_COIN_PACK_COST,
   ENERGY_MAX_DEFAULT,
   ENERGY_ORDER_COMPLETE_BONUS,
   ENERGY_REGEN_INTERVAL_MS,
@@ -735,28 +733,6 @@ export default function App() {
       s ? { ...s, energy: Math.min(s.maxEnergy, s.energy + ENERGY_AD_REWARD) } : s
     );
     setRoomPurchaseToast(`+${ENERGY_AD_REWARD} энергии за просмотр рекламы`);
-    if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
-    purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 2800);
-  }, []);
-
-  const handleBuyEnergyForCoins = useCallback(() => {
-    if (!progStateRef.current) return;
-    const p = progStateRef.current;
-    if (p.coins < ENERGY_COIN_PACK_COST) {
-      setRoomPurchaseToast(`Нужно ${ENERGY_COIN_PACK_COST} монет`);
-      if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
-      purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 2200);
-      return;
-    }
-    const m = new ProgressionManager(p);
-    m.addCoins(-ENERGY_COIN_PACK_COST);
-    setProgState(m.getState());
-    setState((s) =>
-      s
-        ? { ...s, energy: Math.min(s.maxEnergy, s.energy + ENERGY_COIN_PACK_AMOUNT) }
-        : s
-    );
-    setRoomPurchaseToast(`+${ENERGY_COIN_PACK_AMOUNT} энергии за ${ENERGY_COIN_PACK_COST} монет`);
     if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
     purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 2800);
   }, []);
@@ -1910,7 +1886,6 @@ export default function App() {
           isNoMoves={isNoMoves}
           onNoMovesExitHome={handleNoMovesExitHome}
           onWatchAdEnergy={handleWatchAdEnergy}
-          onBuyEnergyForCoins={handleBuyEnergyForCoins}
         />
         </div>
       )}
