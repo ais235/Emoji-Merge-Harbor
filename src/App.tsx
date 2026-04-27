@@ -19,8 +19,8 @@ import {
   orderIsFulfilled,
   orderAllRemainingSatisfiedFromGrid,
   collectIndicesForFullOrderDelivery,
-  ORDER_CUSTOMER_EMOJIS,
-  customerEmojiForOrderId,
+  ORDER_CUSTOMER_AVATAR_PATHS,
+  resolveOrderCustomerAvatar,
   ProgressionState,
   type AppScreen,
   type ActiveZone,
@@ -383,8 +383,8 @@ function buildRandomSessionOrder(
   const mult = 1 + 0.25 * (totalUnits - 1) + 0.1 * (requirements.length - 1);
   const rewardCoins = Math.round(base.coins * mult);
   const rewardXp = Math.round(base.xp * mult);
-  const customerEmoji =
-    ORDER_CUSTOMER_EMOJIS[Math.floor(Math.random() * ORDER_CUSTOMER_EMOJIS.length)]!;
+  const customerAvatar =
+    ORDER_CUSTOMER_AVATAR_PATHS[Math.floor(Math.random() * ORDER_CUSTOMER_AVATAR_PATHS.length)]!;
 
   return {
     id: orderId,
@@ -393,7 +393,7 @@ function buildRandomSessionOrder(
     delivered: {},
     rewardCoins,
     rewardXp,
-    customerEmoji,
+    customerAvatar,
   };
 }
 
@@ -542,9 +542,18 @@ function normalizeOneOrder(o: unknown): Order | null {
   const instanceId =
     typeof r.instanceId === "string" && r.instanceId.length > 0 ? r.instanceId : crypto.randomUUID();
 
+  const customerAvatarRaw =
+    typeof r.customerAvatar === "string" && r.customerAvatar.trim().startsWith("/avatars/")
+      ? r.customerAvatar.trim()
+      : null;
   const customerEmojiRaw =
     typeof r.customerEmoji === "string" && r.customerEmoji.length > 0 ? r.customerEmoji : null;
-  const customerEmoji = customerEmojiRaw ?? customerEmojiForOrderId(id);
+
+  const customerAvatar = resolveOrderCustomerAvatar({
+    id,
+    customerAvatar: customerAvatarRaw ?? undefined,
+    customerEmoji: customerEmojiRaw ?? undefined,
+  });
 
   return {
     id,
@@ -553,7 +562,7 @@ function normalizeOneOrder(o: unknown): Order | null {
     delivered,
     rewardCoins,
     rewardXp,
-    customerEmoji,
+    customerAvatar,
   };
 }
 

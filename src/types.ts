@@ -214,32 +214,60 @@ export interface OrderRequirement {
   itemLevel?: number;
 }
 
-/** Пул эмодзи заказчиков — задаётся при создании заказа (`Order.customerEmoji`). */
-export const ORDER_CUSTOMER_EMOJIS = [
-  "👨",
-  "👩‍🍳",
-  "👮",
-  "🧑‍💼",
-  "👩‍🔬",
-  "🧑‍🎨",
-  "👨‍⚕️",
-  "🧑‍🏫",
-  "🧑‍⚕️",
-  "🧑‍🎓",
-  "🧑‍🌾",
-  "🧑‍🔧",
-  "🧑‍✈️",
-  "🧑‍🚒",
+/** Пул портретов заказчиков (`public/avatars/customer_*.png`). */
+export const ORDER_CUSTOMER_AVATAR_PATHS = [
+  "/avatars/customer_cook_f.png",
+  "/avatars/customer_police.png",
+  "/avatars/customer_business.png",
+  "/avatars/customer_scientist_f.png",
+  "/avatars/customer_artist.png",
+  "/avatars/customer_medic.png",
+  "/avatars/customer_teacher.png",
+  "/avatars/customer_student.png",
+  "/avatars/customer_farmer.png",
+  "/avatars/customer_mechanic.png",
+  "/avatars/customer_pilot.png",
+  "/avatars/customer_firefighter.png",
 ] as const;
 
-/** Детерминированный заказчик по id заказа (для сохранений без поля customerEmoji). */
-export function customerEmojiForOrderId(orderId: string): string {
+/** Миграция старых сохранений: эмодзи заказчика → тот же персонаж в PNG. */
+const LEGACY_CUSTOMER_EMOJI_TO_AVATAR: Record<string, string> = {
+  "👨": "/avatars/customer_student.png",
+  "👩‍🍳": "/avatars/customer_cook_f.png",
+  "👮": "/avatars/customer_police.png",
+  "🧑‍💼": "/avatars/customer_business.png",
+  "👩‍🔬": "/avatars/customer_scientist_f.png",
+  "🧑‍🎨": "/avatars/customer_artist.png",
+  "👨‍⚕️": "/avatars/customer_medic.png",
+  "🧑‍🏫": "/avatars/customer_teacher.png",
+  "🧑‍⚕️": "/avatars/customer_medic.png",
+  "🧑‍🎓": "/avatars/customer_student.png",
+  "🧑‍🌾": "/avatars/customer_farmer.png",
+  "🧑‍🔧": "/avatars/customer_mechanic.png",
+  "🧑‍✈️": "/avatars/customer_pilot.png",
+  "🧑‍🚒": "/avatars/customer_firefighter.png",
+};
+
+/** Детерминированный портрет по id заказа (если в сохранении нет `customerAvatar`). */
+export function customerAvatarForOrderId(orderId: string): string {
   let h = 0;
   for (let i = 0; i < orderId.length; i++) {
     h = (Math.imul(31, h) + orderId.charCodeAt(i)) | 0;
   }
   const u = h >>> 0;
-  return ORDER_CUSTOMER_EMOJIS[u % ORDER_CUSTOMER_EMOJIS.length]!;
+  return ORDER_CUSTOMER_AVATAR_PATHS[u % ORDER_CUSTOMER_AVATAR_PATHS.length]!;
+}
+
+/** Итоговый URL портрета для карточки заказа (новые сохранения + миграция с эмодзи). */
+export function resolveOrderCustomerAvatar(order: Pick<Order, "id" | "customerAvatar" | "customerEmoji">): string {
+  const direct = order.customerAvatar?.trim();
+  if (direct && direct.startsWith("/avatars/")) return direct;
+  const legacyEmoji = order.customerEmoji?.trim();
+  if (legacyEmoji?.startsWith("/avatars/")) return legacyEmoji;
+  if (legacyEmoji && LEGACY_CUSTOMER_EMOJI_TO_AVATAR[legacyEmoji]) {
+    return LEGACY_CUSTOMER_EMOJI_TO_AVATAR[legacyEmoji]!;
+  }
+  return customerAvatarForOrderId(order.id);
 }
 
 export interface Order {
@@ -251,7 +279,9 @@ export interface Order {
   delivered: Partial<Record<ItemId, number>>;
   rewardCoins: number;
   rewardXp: number;
-  /** Эмодзи заказчика на карточке заказа. */
+  /** Путь к PNG заказчика в `public/avatars`. */
+  customerAvatar?: string;
+  /** @deprecated Старые сохранения — эмодзи; при загрузке маппится в PNG. */
   customerEmoji?: string;
 }
 

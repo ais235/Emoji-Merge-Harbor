@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   ALL_ITEMS,
-  customerEmojiForOrderId,
   orderAllRemainingSatisfiedFromGrid,
   orderReqLineSatisfiedOnGrid,
+  resolveOrderCustomerAvatar,
   type GridCell,
   type Order,
 } from "../types";
@@ -31,7 +31,13 @@ export function OrderCard({
   onDeliver,
 }: OrderCardProps) {
   const allMet = orderAllRemainingSatisfiedFromGrid(grid, order);
-  const portraitEmoji = order.customerEmoji ?? customerEmojiForOrderId(order.id);
+  const portraitSrc = resolveOrderCustomerAvatar(order);
+  const [portraitBroken, setPortraitBroken] = useState(false);
+
+  useEffect(() => {
+    setPortraitBroken(false);
+  }, [order.instanceId, portraitSrc]);
+
   const reqs = order.requirements.slice(0, 2);
 
   return (
@@ -67,16 +73,30 @@ export function OrderCard({
           background: "linear-gradient(175deg, #c9e8ff 0%, #a0c8f0 100%)",
         }}
       >
-        <span
-          className="order-card-portrait-emoji select-none leading-none"
-          style={{
-            marginBottom: -4,
-            filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.15))",
-          }}
-          aria-hidden
-        >
-          {portraitEmoji}
-        </span>
+        {portraitBroken ? (
+          <span
+            className="order-card-portrait-emoji select-none leading-none"
+            style={{
+              marginBottom: -4,
+              filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.15))",
+            }}
+            aria-hidden
+          >
+            🧑
+          </span>
+        ) : (
+          <img
+            src={portraitSrc}
+            alt=""
+            className="order-card-portrait-img pointer-events-none select-none"
+            draggable={false}
+            style={{
+              marginBottom: -4,
+              filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.18))",
+            }}
+            onError={() => setPortraitBroken(true)}
+          />
+        )}
       </div>
 
       {/* Поднос */}
