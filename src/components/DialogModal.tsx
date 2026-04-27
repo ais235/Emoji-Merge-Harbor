@@ -77,12 +77,15 @@ const STYLES = `
     z-index: 400;
     display: flex;
     align-items: flex-end;
+    justify-content: center;
     background: rgba(0, 0, 0, 0.45);
     animation: dm-fade-in 0.2s ease forwards;
   }
 
   .dm-panel {
-    width: 100%;
+    width: min(100%, var(--app-content-max));
+    max-width: 100%;
+    box-sizing: border-box;
     background: rgba(22, 15, 8, 0.96);
     border-top: 2.5px solid var(--dm-color);
     display: flex;

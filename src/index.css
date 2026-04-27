@@ -95,6 +95,23 @@ body {
   min-width: 0;
 }
 
+/** Награда на карточке заказа — как ds-stat-pill в шапке (монетки + число), компактнее под узкую колонку */
+.order-card-reward {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 7px;
+  border: 1px solid var(--c-peach2);
+  border-radius: 999px;
+  background: var(--c-cream);
+  color: var(--c-browndark);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.1;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
 /** Карточка заказа: эмодзи от ширины колонки игры (не от всего vw — иначе на широком портрете переразмер). */
 .order-card-portrait-emoji {
   font-size: clamp(
@@ -104,12 +121,12 @@ body {
   );
 }
 
-/** PNG заказчика — высота сопоставима с прежним эмодзи-блоком, кроп по верху (бюст). */
+/** PNG заказчика — выше, чтобы не обрезать фигуру у линии с подносом; кроп по верху. */
 .order-card-portrait-img {
   display: block;
   width: 100%;
   max-width: 100%;
-  height: clamp(52px, calc((min(100vw, var(--app-content-max)) - 2.5rem) / 3.2), 84px);
+  height: clamp(76px, calc((min(100vw, var(--app-content-max)) - 2.5rem) / 2.35), 124px);
   object-fit: cover;
   object-position: top center;
 }

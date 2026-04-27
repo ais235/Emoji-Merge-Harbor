@@ -74,6 +74,7 @@ const STYLES = `
     pointer-events: none;
     display: flex;
     align-items: flex-end;
+    justify-content: center;
   }
   .vn-overlay.vn-blocking {
     pointer-events: auto;
@@ -81,7 +82,9 @@ const STYLES = `
   }
 
   .vn-panel {
-    width: 100%;
+    width: min(100%, var(--app-content-max));
+    max-width: 100%;
+    box-sizing: border-box;
     background: rgba(30, 22, 14, 0.93);
     border-top: 2px solid var(--vn-color);
     padding: 0 0 env(safe-area-inset-bottom, 8px);

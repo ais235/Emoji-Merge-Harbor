@@ -4,6 +4,7 @@
  */
 
 import React, { useEffect, useState } from "react";
+import { Coins } from "lucide-react";
 import {
   ALL_ITEMS,
   orderAllRemainingSatisfiedFromGrid,
@@ -48,31 +49,20 @@ export function OrderCard({
         boxShadow: allMet ? "0 3px 0 #2E7D32" : "0 3px 0 #a67c2e",
       }}
     >
-      {/* Жёлтая полоска — цена */}
+      {/* Портрет; награда — как в шапке игры (иконка монет + число), правый верх */}
       <div
-        className="flex shrink-0 items-center justify-end gap-0.5 border-b-2 px-1.5 py-1"
-        style={{
-          background: "#FFD700",
-          borderColor: "#C8A200",
-        }}
-      >
-        <span
-          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-[#D4810A]"
-          style={{ background: "#F5A623" }}
-          aria-hidden
-        />
-        <span className="text-[10px] font-bold tabular-nums leading-none text-[#6B4400]">
-          {order.rewardCoins}
-        </span>
-      </div>
-
-      {/* Портрет — эмодзи сразу под полосой цены, без лишнего пустого поля */}
-      <div
-        className="relative flex shrink-0 flex-col items-center overflow-hidden pt-0.5 pb-0"
+        className="relative flex shrink-0 flex-col items-center overflow-hidden pb-0"
         style={{
           background: "linear-gradient(175deg, #c9e8ff 0%, #a0c8f0 100%)",
         }}
       >
+        <div
+          className="order-card-reward pointer-events-none absolute right-1 top-1 z-10"
+          aria-label={`Награда ${order.rewardCoins} монет`}
+        >
+          <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+          <span className="tabular-nums">{order.rewardCoins}</span>
+        </div>
         {portraitBroken ? (
           <span
             className="order-card-portrait-emoji select-none leading-none"

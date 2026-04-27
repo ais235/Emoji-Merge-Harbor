@@ -1,10 +1,13 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Одна шапка миниигры: те же классы/иконки, что на «Дом» (ds-card-peach, ds-stat-pill,
+ * Zap / Star / Coins, ds-progress). Таймер до +1 энергии — обратный отсчёт M:SS.
  */
 
 import React, { useMemo } from "react";
-import { Coins } from "lucide-react";
+import { Coins, Star, Volume2, VolumeX, Zap } from "lucide-react";
 
 export interface GameHeaderProps {
   energy: number;
@@ -23,6 +26,13 @@ export interface GameHeaderProps {
   onToggleSound?: () => void;
 }
 
+function formatRegenCountdown(ms: number): string {
+  const sec = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 export function GameHeader({
   energy,
   maxEnergy,
@@ -37,123 +47,84 @@ export function GameHeader({
   soundOn = true,
   onToggleSound,
 }: GameHeaderProps) {
-  const minutesLeft = useMemo(
-    () => (msUntilNextEnergy > 0 ? Math.max(1, Math.ceil(msUntilNextEnergy / 60_000)) : 0),
-    [msUntilNextEnergy]
-  );
   const xpFill =
     nextLevelXP > 0 ? Math.min(100, (playerXP / nextLevelXP) * 100) : 0;
   const showRegen = energy < maxEnergy && msUntilNextEnergy > 0;
   const ordersLabel =
     maxOrders > 0 ? `Заказов: ${ordersCompleted}/${maxOrders}` : "Заказов: —";
 
-  return (
-    <div
-      className="mb-1.5 w-full flex-shrink-0 overflow-hidden rounded-2xl border bg-white shadow-sm"
-      style={{
-        borderColor: "#E8E0D0",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
-      }}
-    >
-      {/* Одна строка: Дом | энергия | звук | монеты (как на экране «Дом») */}
-      <div
-        className="flex min-h-[44px] items-center gap-2 px-3 py-2"
-        style={{ background: "#FFF8EE", borderBottom: "1px solid #F0E8D8" }}
-      >
-        <button
-          type="button"
-          onClick={onGoHome}
-          className="flex shrink-0 items-center gap-1 rounded-lg border-0 px-2 py-1 text-[11px] font-semibold"
-          style={{ background: "#F0E8D8", color: "#8B6914" }}
-        >
-          <span aria-hidden>🏠</span> Дом
-        </button>
+  const regenTimer = useMemo(
+    () => formatRegenCountdown(msUntilNextEnergy),
+    [msUntilNextEnergy]
+  );
 
-        <div className="flex min-w-0 flex-1 justify-center px-1">
-          <div
-            className="flex max-w-full shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 pl-1.5"
-            style={{
-              background: "#EEF6FF",
-              borderColor: "#B3D4F5",
-              borderWidth: "1.5px",
-            }}
-          >
-            <div
-              className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[12px]"
-              style={{
-                background: "linear-gradient(135deg, #64B5F6, #1565C0)",
-              }}
-              aria-hidden
-            >
-              ⚡
+  return (
+    <div className="ds-card-peach mb-1.5 w-full flex-shrink-0 overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2">
+          <button type="button" onClick={onGoHome} className="ds-pill-home shrink-0">
+            ← Дом
+          </button>
+
+          <div className="flex shrink-0 flex-col items-center gap-0.5">
+            <div className="ds-stat-pill">
+              <Zap className="h-3 w-3 shrink-0" style={{ color: "var(--c-bluedark)" }} aria-hidden />
+              <span className="tabular-nums">
+                {energy}/{maxEnergy}
+              </span>
             </div>
-            <div className="flex min-w-0 flex-col leading-tight">
-              <span className="text-[12px] font-bold tabular-nums" style={{ color: "#1565C0" }}>
-                {energy} / {maxEnergy}
+            <span
+              className="min-h-[14px] font-mono text-[10px] font-semibold tabular-nums leading-none"
+              style={{ color: "var(--c-bluedark)" }}
+            >
+              {showRegen ? regenTimer : "\u00a0"}
+            </span>
+          </div>
+
+          <div className="flex min-h-[44px] min-w-[88px] flex-1 flex-col items-center justify-center px-1">
+            <div className="mb-0.5 flex items-center gap-0.5">
+              <Star className="h-2.5 w-2.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+              <span className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
+                Уровень {playerLevel}
               </span>
-              <span
-                className="min-h-[11px] text-[9px]"
-                style={{ color: "#78A9D4", opacity: showRegen ? 1 : 0 }}
-                aria-hidden={!showRegen}
-              >
-                {showRegen ? `+1 через ${minutesLeft}м` : "\u00a0"}
-              </span>
+            </div>
+            <div className="ds-progress w-full max-w-[160px]">
+              <div
+                className="ds-progress__fill ds-progress__fill--gold"
+                style={{ width: `${xpFill}%` }}
+              />
             </div>
           </div>
+
+          <div id="header-coin-icon" className="ds-stat-pill inline-flex shrink-0 origin-center">
+            <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+            <span className="tabular-nums">{coins}</span>
+          </div>
+
+          <span
+            className="max-w-[9rem] shrink-0 text-[10px] font-medium tabular-nums leading-tight sm:max-w-none"
+            style={{ color: "var(--c-brown)" }}
+          >
+            {ordersLabel}
+          </span>
         </div>
 
         {onToggleSound ? (
           <button
             type="button"
             onClick={onToggleSound}
-            className="shrink-0 rounded-md p-1 text-[14px] leading-none opacity-90 hover:opacity-100"
-            style={{ background: "transparent", border: "none", cursor: "pointer" }}
+            className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full border bg-[var(--c-cream)] p-2"
+            style={{ borderColor: "var(--c-peach2)" }}
             title={soundOn ? "Выключить звук" : "Включить звук"}
             aria-label={soundOn ? "Выключить звук" : "Включить звук"}
           >
-            {soundOn ? "🔊" : "🔇"}
+            {soundOn ? (
+              <Volume2 className="h-[18px] w-[18px]" style={{ color: "var(--c-browndark)" }} aria-hidden />
+            ) : (
+              <VolumeX className="h-[18px] w-[18px]" style={{ color: "var(--c-browndark)" }} aria-hidden />
+            )}
           </button>
-        ) : (
-          <span className="w-7 shrink-0" aria-hidden />
-        )}
-
-        <div
-          id="header-coin-icon"
-          className="ds-stat-pill inline-flex shrink-0 origin-center"
-        >
-          <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
-          <span className="tabular-nums">{coins}</span>
-        </div>
-      </div>
-
-      {/* Уровень, XP, счётчик заказов */}
-      <div className="flex items-center gap-2 px-3 py-2.5">
-        <div
-          className="shrink-0 rounded-[10px] border px-2 py-0.5 text-[10px] font-bold"
-          style={{
-            background: "#FFF3CD",
-            borderColor: "#F5C518",
-            borderWidth: "1.5px",
-            color: "#7A5000",
-          }}
-        >
-          ⭐ Ур.{playerLevel}
-        </div>
-        <div
-          className="min-w-0 flex-1 overflow-hidden rounded-[10px]"
-          style={{ height: 5, background: "#EEE" }}
-        >
-          <div
-            className="h-full rounded-[10px] transition-[width] duration-300 ease-out"
-            style={{
-              width: `${xpFill}%`,
-              background: "linear-gradient(90deg, #FFD700, #FF9800)",
-            }}
-          />
-        </div>
-        <div className="shrink-0 text-[10px] tabular-nums" style={{ color: "#999" }}>
-          {ordersLabel}
-        </div>
+        ) : null}
       </div>
     </div>
   );
