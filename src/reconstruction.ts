@@ -1,5 +1,5 @@
 import type { GridCell, ItemId, ReconstructionState } from "./types";
-import { isObstacleCellState } from "./types";
+import { emptyGridCell } from "./utils/gridCells";
 
 export type ReconstructionRequirement =
   | { type: "orders"; count: number }
@@ -141,10 +141,10 @@ export function tryDeliverReconstructionItem(
   for (const need of stage.requirement.needs) {
     const rem = reconstructionItemRemaining(recon, stage, need.itemId);
     if (rem <= 0) continue;
-    const idx = grid.findIndex((c) => c.item === need.itemId && !isObstacleCellState(c.cellState));
+    const idx = grid.findIndex((c) => c.cellType === "item" && c.item === need.itemId);
     if (idx < 0) continue;
     const newGrid = [...grid];
-    newGrid[idx] = { ...newGrid[idx], item: null };
+    newGrid[idx] = emptyGridCell();
     const prev = recon.itemsDelivered[need.itemId] ?? 0;
     return {
       reconstruction: {
@@ -187,7 +187,7 @@ export function canDeliverReconstructionItem(recon: ReconstructionState, grid: G
   if (!stage || stage.requirement.type !== "items") return false;
   for (const need of stage.requirement.needs) {
     if (reconstructionItemRemaining(recon, stage, need.itemId) <= 0) continue;
-    if (grid.some((c) => c.item === need.itemId && !isObstacleCellState(c.cellState))) return true;
+    if (grid.some((c) => c.cellType === "item" && c.item === need.itemId)) return true;
   }
   return false;
 }

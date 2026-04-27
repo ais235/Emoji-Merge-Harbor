@@ -28,6 +28,12 @@ export interface CafeHubScreenProps {
   reconstruction: ReconstructionState;
   onBackToMenu: () => void;
   onPlay: () => void;
+  /** Подсказка после исчерпания заказов в миниигре — какую комнату чинить. */
+  repairNudgeZone?: ActiveZone | null;
+  /** Тост после ремонта: задания снова доступны. */
+  hubOrdersToast?: string | null;
+  /** Пульс кнопки «Играть» после сброса лимита заказов. */
+  pulsePlayButton?: boolean;
 }
 
 export default function CafeHubScreen({
@@ -47,7 +53,15 @@ export default function CafeHubScreen({
   reconstruction,
   onBackToMenu,
   onPlay,
+  repairNudgeZone = null,
+  hubOrdersToast = null,
+  pulsePlayButton = false,
 }: CafeHubScreenProps) {
+  const nudgeRoomName =
+    repairNudgeZone != null
+      ? (HUB_ZONES.find((z) => z.id === repairNudgeZone)?.displayName ?? "комнату")
+      : "";
+
   return (
     <div className="mx-auto flex h-[100dvh] w-full max-w-[400px] flex-col overflow-hidden bg-[#E8EDF2] font-sans select-none">
       <header className="flex flex-shrink-0 items-center gap-2 border-b border-gray-200/90 bg-white px-3 py-2 shadow-sm">
@@ -65,13 +79,19 @@ export default function CafeHubScreen({
           type="button"
           whileTap={{ scale: 0.98 }}
           onClick={onPlay}
+          animate={
+            pulsePlayButton
+              ? { scale: [1, 1.06, 1], boxShadow: ["0 1px 2px rgb(0 0 0 / 0.05)", "0 0 0 4px rgb(250 204 21 / 0.5)", "0 1px 2px rgb(0 0 0 / 0.05)"] }
+              : false
+          }
+          transition={pulsePlayButton ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" } : undefined}
           className="flex-shrink-0 rounded-lg bg-blue-500 px-3 py-1.5 text-xs font-black uppercase text-white shadow-sm active:bg-blue-600"
         >
           Играть
         </motion.button>
       </header>
 
-      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
+      <div className="no-scrollbar scroll-touch-y min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 pb-0">
         <div className="mb-2 rounded-xl border border-gray-100 bg-white p-2 shadow-sm">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5">
@@ -174,10 +194,19 @@ export default function CafeHubScreen({
           {HUB_ZONES.map((zone) => {
             const key = progressZoneId(zone.id);
             const isOpen = unlockedZones.includes(key);
+            const isRepairNudge = repairNudgeZone != null && zone.id === repairNudgeZone;
             return (
-              <div
+              <motion.div
                 key={zone.id}
-                className="flex items-center gap-2 rounded-xl border border-gray-100 bg-white p-2 shadow-sm"
+                animate={
+                  isRepairNudge
+                    ? { boxShadow: ["0 1px 2px rgb(0 0 0 / 0.05)", "0 0 0 3px rgb(251 191 36 / 0.85)", "0 1px 2px rgb(0 0 0 / 0.05)"] }
+                    : false
+                }
+                transition={isRepairNudge ? { duration: 1.4, repeat: Infinity, ease: "easeInOut" } : undefined}
+                className={`flex items-center gap-2 rounded-xl border bg-white p-2 shadow-sm ${
+                  isRepairNudge ? "border-amber-400 ring-1 ring-amber-300/80" : "border-gray-100"
+                }`}
               >
                 <span
                   className="flex h-10 w-10 flex-shrink-0 items-center justify-center text-3xl leading-none"
@@ -205,11 +234,24 @@ export default function CafeHubScreen({
                 >
                   Войти
                 </button>
-              </div>
+              </motion.div>
             );
           })}
         </div>
       </div>
+
+      {repairNudgeZone != null ? (
+        <div className="flex-shrink-0 border-t border-amber-200/80 bg-amber-50 px-3 py-2.5 text-center shadow-[0_-4px_12px_rgb(0_0_0_/0.06)]">
+          <p className="text-[11px] font-semibold leading-snug text-amber-950">
+            Отремонтируйте «{nudgeRoomName}», чтобы продолжить задания в миниигре
+          </p>
+        </div>
+      ) : null}
+      {hubOrdersToast ? (
+        <div className="flex-shrink-0 border-t border-green-200/90 bg-green-50 px-3 py-2.5 text-center shadow-[0_-4px_12px_rgb(0_0_0_/0.06)]">
+          <p className="text-[11px] font-semibold leading-snug text-green-950">{hubOrdersToast}</p>
+        </div>
+      ) : null}
 
       <style>{`
         .no-scrollbar::-webkit-scrollbar { display: none; }

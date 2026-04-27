@@ -1,11 +1,11 @@
 import type { GridCell, ItemId, ProgressionState } from "./types";
-import { ALL_ITEMS, ITEM_CHAINS, KEY_CHAIN_ID } from "./types";
+import { ALL_ITEMS, ITEM_CHAINS } from "./types";
+import { computeMaxSeenMergeableLevelFromGrid } from "./utils/sessionGridProgress";
 
 /** Награда за полный сбор цепочки (из `ITEM_CHAINS`). Ориентир — порядок цен мебели в комнате. */
 export const CHAIN_COMPLETE_REWARDS: Record<string, { coins: number; energy: number }> = {
   fruit: { coins: 140, energy: 10 },
   sweets: { coins: 140, energy: 10 },
-  [KEY_CHAIN_ID]: { coins: 90, energy: 6 },
   hall_tea: { coins: 180, energy: 10 },
   kitchen_meal: { coins: 260, energy: 12 },
   bedroom_cozy: { coins: 340, energy: 14 },
@@ -36,8 +36,18 @@ export function defaultCollectionState(): Pick<
 export function normalizeCollectionFields(prog: ProgressionState): ProgressionState {
   const ci = prog.collectedItems;
   const cr = prog.collectionChainRewardsClaimed;
+  const toc = prog.totalOrdersCompleted;
+  const msl = prog.maxSeenItemLevel;
+  const mor = prog.minigameOrdersAtRoomRepair;
   return {
     ...prog,
+    maxSeenItemLevel:
+      typeof msl === "number" && Number.isFinite(msl) && msl >= 1 ? Math.floor(msl) : 1,
+    minigameOrdersAtRoomRepair:
+      mor && typeof mor === "object" && !Array.isArray(mor)
+        ? (mor as ProgressionState["minigameOrdersAtRoomRepair"])
+        : {},
+    totalOrdersCompleted: typeof toc === "number" && Number.isFinite(toc) ? Math.max(0, Math.floor(toc)) : 0,
     collectedItems:
       ci && typeof ci === "object" && !Array.isArray(ci)
         ? (ci as Record<ItemId, boolean>)
@@ -168,26 +178,16 @@ export function registerCollectiblesBulk(
 }
 
 /** Синхронизация сетки при загрузке: отметить всё на поле, при полных цепочках выдать награды. */
-/** Текст тоста: сначала история предмета, затем полная цепочка. */
-export function formatCollectionToast(
-  story?: string,
-  chain?: { chainName: string; coins: number; energy: number }
-): string | null {
-  if (!story && !chain) return null;
-  const parts: string[] = [];
-  if (story) parts.push(story);
-  if (chain) {
-    const e = chain.energy > 0 ? ` +${chain.energy} ⚡` : "";
-    parts.push(`Коллекция «${chain.chainName}» завершена! +${chain.coins} 🍪${e}`);
-  }
-  return parts.join("\n\n");
-}
-
 export function hydrateCollectionFromGrid(
   grid: GridCell[],
   prog: ProgressionState
 ): { nextProg: ProgressionState; energyFromChainRewards: number } {
   let nextProg = normalizeCollectionFields(prog);
+  const fromGridLevel = computeMaxSeenMergeableLevelFromGrid(grid);
+  nextProg = {
+    ...nextProg,
+    maxSeenItemLevel: Math.max(nextProg.maxSeenItemLevel, fromGridLevel),
+  };
   const idsOnGrid = new Set<ItemId>();
   for (const c of grid) {
     if (c.item && isCollectibleItemId(c.item)) idsOnGrid.add(c.item);

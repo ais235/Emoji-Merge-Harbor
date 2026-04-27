@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+/** iOS / мобильный: инерционный скролл + явный touch-action для горизонтальных/вертикальных полос */
+.scroll-touch-x {
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+}
+
+.scroll-touch-y {
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+/** Горизонтальная полоса заказов: свайп/скролл без видимой полосы прокрутки */
+.orders-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.orders-scroll::-webkit-scrollbar {
+  display: none;
+}

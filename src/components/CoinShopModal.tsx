@@ -52,7 +52,7 @@ export default function CoinShopModal({
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="no-scrollbar max-h-[min(70dvh,520px)] overflow-y-auto p-2">
+        <div className="no-scrollbar scroll-touch-y max-h-[min(70dvh,520px)] overflow-y-auto p-2">
           <div className="mb-2 flex items-center justify-center gap-1.5 rounded-xl border border-yellow-100 bg-yellow-50 py-2">
             <Coins className="h-4 w-4 fill-yellow-600 text-yellow-600" />
             <span className="text-sm font-bold text-yellow-800">{coins}</span>

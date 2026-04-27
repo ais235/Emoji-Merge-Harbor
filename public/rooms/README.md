@@ -130,14 +130,17 @@ public/rooms/hall/table_fix.png
 
 | Предмет | Файл | `imageSrc` |
 |---------|------|------------|
-| Стол | `public/rooms/office/office_desk.png` | `/rooms/office/office_desk.png` |
-| Книги | `public/rooms/office/office_books.png` | `/rooms/office/office_books.png` |
-| Компьютер | `public/rooms/office/office_computer.png` | `/rooms/office/office_computer.png` |
-| Кресло | `public/rooms/office/office_chair.png` | `/rooms/office/office_chair.png` |
-| Лампа | `public/rooms/office/office_lamp.png` | `/rooms/office/office_lamp.png` |
-| Стеллаж | `public/rooms/office/office_shelf.png` | `/rooms/office/office_shelf.png` |
-| Постер | `public/rooms/office/office_art.png` | `/rooms/office/office_art.png` |
+| Ковёр | `public/rooms/office/office_rug.png` | `/rooms/office/office_rug.png` |
+| Шкаф | `public/rooms/office/office_cabinet.png` | `/rooms/office/office_cabinet.png` |
+| Картина | `public/rooms/office/office_painting.png` | `/rooms/office/office_painting.png` |
 | Часы | `public/rooms/office/office_clock.png` | `/rooms/office/office_clock.png` |
+| Стол | `public/rooms/office/office_desk.png` | `/rooms/office/office_desk.png` |
+| Компьютер | `public/rooms/office/office_computer.png` | `/rooms/office/office_computer.png` |
+| Глобус | `public/rooms/office/office_globe.png` | `/rooms/office/office_globe.png` |
+| Кресло офисное | `public/rooms/office/office_task_chair.png` | `/rooms/office/office_task_chair.png` |
+| Диван | `public/rooms/office/office_sofa.png` | `/rooms/office/office_sofa.png` |
+| Кофейный столик | `public/rooms/office/office_coffee_table.png` | `/rooms/office/office_coffee_table.png` |
+| Кресло обычное | `public/rooms/office/office_chair.png` | `/rooms/office/office_chair.png` |
 
 Фон: `public/rooms/office-bg.png`
 

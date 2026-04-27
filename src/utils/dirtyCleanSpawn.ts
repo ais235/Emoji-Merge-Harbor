@@ -1,4 +1,5 @@
 import type { GridCell, ItemChain } from "../types";
+import { itemGridCell, withSyncedItemMeta } from "./gridCells";
 import {
   COIN_PICKUP_ITEM_ID,
   ENERGY_PICKUP_ITEM_ID,
@@ -16,12 +17,12 @@ function pickLootTargetCell(
   height: number
 ): number | null {
   const self = grid[clearedIndex];
-  if (self.cellState === "normal" && self.item === null) {
+  if (self.cellType === "empty" && self.item === null) {
     return clearedIndex;
   }
   const neighbors = getNeighborIndices(clearedIndex, width, height);
   const empties = neighbors.filter(
-    (i) => grid[i].cellState === "normal" && grid[i].item === null
+    (i) => grid[i].cellType === "empty" && grid[i].item === null
   );
   if (empties.length === 0) return null;
   return empties[Math.floor(Math.random() * empties.length)];
@@ -57,6 +58,6 @@ export function trySpawnLootOnDirtyOneClear(
     itemId = first.id;
   }
 
-  grid[target] = { ...grid[target], item: itemId, generatorCharges: undefined };
+  grid[target] = withSyncedItemMeta(itemGridCell(itemId));
   return target;
 }

@@ -78,7 +78,7 @@ export default function DailyScreen({
         </h1>
       </header>
 
-      <div className="no-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+      <div className="no-scrollbar scroll-touch-y min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
         {/* Секция 1: ежедневный бонус */}
         <section className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
           <h2 className="mb-3 text-xs font-bold uppercase tracking-wide text-gray-500">

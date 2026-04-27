@@ -1,5 +1,5 @@
 import type { GridCell } from "../types";
-import { isObstacleCellState } from "../types";
+import { isBlockedCellType } from "../types";
 
 /**
  * Соседи по горизонтали/вертикали в плоском массиве (строка за строкой, row-major).
@@ -35,14 +35,14 @@ export function pickEmptyCellForGeneratorSpawn(
 ): number | null {
   const neighbors = getNeighborIndices(generatorIndex, width, height);
   const emptyNear = neighbors.filter(
-    (i) => !isObstacleCellState(grid[i].cellState) && grid[i].item === null
+    (i) => !isBlockedCellType(grid[i].cellType) && grid[i].cellType === "empty" && grid[i].item === null
   );
   if (emptyNear.length > 0) {
     return emptyNear[Math.floor(Math.random() * emptyNear.length)];
   }
   const allEmpty: number[] = [];
   for (let i = 0; i < grid.length; i++) {
-    if (!isObstacleCellState(grid[i].cellState) && grid[i].item === null) {
+    if (!isBlockedCellType(grid[i].cellType) && grid[i].cellType === "empty" && grid[i].item === null) {
       allEmpty.push(i);
     }
   }

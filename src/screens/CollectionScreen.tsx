@@ -43,7 +43,7 @@ export default function CollectionScreen({ progState, onBack }: CollectionScreen
         <span className="w-10 flex-shrink-0" aria-hidden />
       </header>
 
-      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-3 pb-[env(safe-area-inset-bottom,12px)]">
+      <div className="no-scrollbar scroll-touch-y min-h-0 flex-1 overflow-y-auto px-3 py-3 pb-[env(safe-area-inset-bottom,12px)]">
         {chains.map((chain) => {
           const reward = CHAIN_COMPLETE_REWARDS[chain.id];
           const mergeables = chain.items.filter(

@@ -53,9 +53,14 @@ export default function RoomCanvas({
 }: RoomCanvasProps) {
   const [justBoughtId, setJustBoughtId] = useState<string | null>(null);
   const [sparkles, setSparkles] = useState<{ id: string; tx: string; ty: string }[]>([]);
+  const [bgLoadFailed, setBgLoadFailed] = useState(false);
   const prevPurchasedRef = useRef<string[] | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
+
+  useEffect(() => {
+    setBgLoadFailed(false);
+  }, [roomVisual.bgImage]);
 
   useEffect(() => {
     const prev = prevPurchasedRef.current;
@@ -147,16 +152,17 @@ export default function RoomCanvas({
         touchAction: editor ? "none" : undefined,
       }}
     >
-      {roomVisual.bgImage ? (
+      {roomVisual.bgImage && !bgLoadFailed ? (
         <img
           src={publicAssetUrl(roomVisual.bgImage)}
           alt=""
-          className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+          className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover"
           draggable={false}
+          onError={() => setBgLoadFailed(true)}
         />
       ) : null}
 
-      {!roomVisual.bgImage ? (
+      {!roomVisual.bgImage || bgLoadFailed ? (
         <span
           className="pointer-events-none absolute left-1/2 top-1/2 z-[1] -translate-x-1/2 -translate-y-1/2 select-none leading-none"
           style={{

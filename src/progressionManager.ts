@@ -1,5 +1,8 @@
 import { LEVELS, UPGRADES } from "./progressionData";
-import { INITIAL_GENERATOR_CHARGES, ProgressionState } from "./types";
+import type { ProgressionState } from "./types";
+
+/** Базовое значение для апгрейда «доп. заряды генератора» (поле больше не хранит заряды). */
+const GENERATOR_CHARGE_CAP_BASE = 5;
 
 /** Суммарные эффекты купленных апгрейдов. income_bonus / gen_speed / bonus_chance — доли (0 = нет эффекта). */
 export interface ActiveBonuses {
@@ -21,7 +24,7 @@ export function getGeneratorMaxCharges(purchasedUpgradeIds: string[]): number {
     const u = UPGRADES.find((x) => x.id === id);
     if (u?.effectType === "gen_extra_charges") extra += u.effectValue;
   });
-  return INITIAL_GENERATOR_CHARGES + Math.max(0, Math.floor(extra));
+  return GENERATOR_CHARGE_CAP_BASE + Math.max(0, Math.floor(extra));
 }
 
 export class ProgressionManager {

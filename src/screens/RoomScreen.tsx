@@ -182,7 +182,7 @@ export default function RoomScreen({
         </div>
       )}
 
-      <div className="no-scrollbar flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-2">
+      <div className="no-scrollbar scroll-touch-y flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-2">
         {purchasedHere.length > 0 ? (
           <section>
             <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">

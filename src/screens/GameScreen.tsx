@@ -3,40 +3,94 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import {
-  Zap,
-  Coins,
-  Star,
-  CheckCircle2,
-  HelpCircle,
-  Lock,
-} from "lucide-react";
+import { Zap, Coins, Star, CircleAlert, HelpCircle } from "lucide-react";
 import {
   ALL_ITEMS,
-  isObstacleCellState,
+  isCobwebUnknownPlaceholder,
+  isBlockedCellType,
+  isOpenCellType,
   itemIsGenerator,
   itemIsResourcePickup,
-  KEY_ITEM_ID,
   orderCanDeliverFromGrid,
   orderRemainingForItem,
-  type CellState,
   type GameState,
+  type GridCell,
+  type Order,
   type ProgressionState,
   type CoinFlyState,
 } from "../types";
-import {
-  canDeliverReconstructionItem,
-  getCurrentReconstructionStage,
-  isReconstructionFullyComplete,
-  reconstructionOrdersProgress,
-} from "../reconstruction";
+import GameSelectionInfoModal from "../components/GameSelectionInfoModal";
+import OrderItemInfoModal from "../components/OrderItemInfoModal";
 
-function dirtyStageClass(cellState: CellState): "cell-dirty-2" | "cell-dirty-1" | null {
-  if (cellState === "dirty_2") return "cell-dirty-2";
-  if (cellState === "dirty_1") return "cell-dirty-1";
-  return null;
+/**
+ * Один заказчик на заказ (эмодзи по роли).
+ * Порядок: врач, студент, фермер, повар, механик, офисный работник, пилот, пожарный.
+ */
+const ORDER_CUSTOMER_EMOJIS = [
+  "🧑‍⚕️",
+  "🧑‍🎓",
+  "🧑‍🌾",
+  "🧑‍🍳",
+  "🧑‍🔧",
+  "🧑‍💼",
+  "🧑‍✈️",
+  "🧑‍🚒",
+] as const;
+
+function customerEmojiForOrder(orderId: string): string {
+  let h = 0;
+  for (let i = 0; i < orderId.length; i++) {
+    h = (Math.imul(31, h) + orderId.charCodeAt(i)) | 0;
+  }
+  const u = h >>> 0;
+  return ORDER_CUSTOMER_EMOJIS[u % ORDER_CUSTOMER_EMOJIS.length];
+}
+
+/** На открытой клетке поля лежит экземпляр предмета из заказа. */
+function orderItemOnOpenGrid(grid: GridCell[], itemId: string): boolean {
+  return grid.some((c) => c.cellType === "item" && c.item === itemId);
+}
+
+/** Предмет ещё требуется хотя бы в одном заказе (остаток по слоту > 0). */
+function mergeableItemNeededInOrders(orders: Order[], itemId: string): boolean {
+  return orders.some((o) => orderRemainingForItem(o, itemId) > 0);
+}
+
+/** Есть ли у текущих заказов строка с этим itemId (для подсказки «сдано по заказу» на поле). */
+function itemIdInAnyOrderRequirement(orders: Order[], itemId: string): boolean {
+  return orders.some((o) => o.requirements.some((r) => r.itemId === itemId));
+}
+
+const GRID_DRAG_THRESHOLD_PX = 12;
+
+/** max-w-md (28rem) — ширина колонки миниигры */
+const GAME_MAX_INNER_WIDTH_PX = 448;
+/** px-2 слева/справа у колонки игры */
+const GAME_COLUMN_H_PAD_PX = 16;
+/** p-1 слева/справа у рамки сетки */
+const GRID_FRAME_H_PAD_PX = 8;
+const GRID_GAP_PX = 4;
+
+function computeGridCellSize(windowWidth: number, gridW: number): number {
+  const usable =
+    Math.min(windowWidth, GAME_MAX_INNER_WIDTH_PX) - GAME_COLUMN_H_PAD_PX - GRID_FRAME_H_PAD_PX;
+  const raw = Math.floor((usable - (gridW - 1) * GRID_GAP_PX) / gridW);
+  return Math.max(24, raw);
+}
+
+/**
+ * С этой ячейки можно начать перетаскивание.
+ * Награды 🪙/⚡ — один клик забрать. Генератор: клик выделяет, второй клик по нему — выдача; таскать можно.
+ */
+function cellAllowsGridDragSource(cell: GridCell): boolean {
+  if (!cell.item) return false;
+  if (!isOpenCellType(cell.cellType)) return false;
+  const def = ALL_ITEMS[cell.item];
+  if (!def) return false;
+  if (itemIsResourcePickup(def)) return false;
+  return true;
 }
 
 export interface GameScreenProps {
@@ -48,33 +102,33 @@ export interface GameScreenProps {
   xpProgressPercent: number;
   onGoHome: () => void;
   onCellClick: (index: number, shiftKey?: boolean) => void;
-  onCompleteOrder: (orderId: string) => void;
+  /** Слияние/обмен как второй шаг, но через перетаскивание с from на to. */
+  onCellPairDrop: (from: number, to: number, shiftKey: boolean) => void;
+  onCompleteOrder: (orderId: string, orderInstanceId: string) => void;
   onOpenTutorial: () => void;
   selectedCell: number | null;
   mergePopIndex: number | null;
   /** Краткая подсветка соседних клеток после снятия препятствия */
   cellUnlockedFlashIndices?: number[];
-  /** Подсветка клеток с лутом после очистки dirty_1 → normal */
-  cellDirtyLootFlashIndices?: number[];
   cellShakePair: [number, number] | null;
   coinFly: CoinFlyState | null;
   gridWidth: number;
   gridHeight: number;
-  paidCleanMode: boolean;
-  onTogglePaidCleanMode: () => void;
-  sessionOrdersCompleted: number;
-  sessionOrderGoal: number;
-  isSessionComplete: boolean;
-  onSessionNewGame: () => void;
+  totalOrdersCompleted: number;
+  /** Лимит заказов миниигры для текущей комнаты (ремонт в хабе). */
+  minigameOrdersCompletedAtRoom: number;
+  maxMinigameOrdersAtRoom: number;
+  /** Нет активных заказов и лимит исчерпан — показать заглушку «в хаб». */
+  ordersExhausted: boolean;
+  /** Стоимость следующего визуального ремонта в текущей комнате; null — всё куплено. */
+  nextRepairCost: number | null;
+  /** Монеты игрока (для подсказки на заглушке). */
+  playerCoins: number;
+  /** Из заглушки исчерпанных заказов — хаб с подсветкой комнаты. */
+  onOrdersExhaustedGoHome: () => void;
   onSessionExitHome: () => void;
   isNoMoves: boolean;
-  onShuffleGrid: () => void;
-  onNoMovesNewSession: () => void;
   onNoMovesExitHome: () => void;
-  /** Сдача предмета в этап «Реконструкция» (если этап требует предметы). */
-  onReconstructionDeliver: () => void;
-  /** Тост при первом открытии предмета в коллекции / полной цепочке. */
-  collectionToast?: string | null;
 }
 
 export default function GameScreen({
@@ -86,45 +140,209 @@ export default function GameScreen({
   xpProgressPercent,
   onGoHome,
   onCellClick,
+  onCellPairDrop,
   onCompleteOrder,
   onOpenTutorial,
   selectedCell,
   mergePopIndex,
   cellUnlockedFlashIndices = [],
-  cellDirtyLootFlashIndices = [],
   cellShakePair,
   coinFly,
   gridWidth,
   gridHeight,
-  paidCleanMode,
-  onTogglePaidCleanMode,
-  sessionOrdersCompleted,
-  sessionOrderGoal,
-  isSessionComplete,
-  onSessionNewGame,
+  totalOrdersCompleted,
+  minigameOrdersCompletedAtRoom,
+  maxMinigameOrdersAtRoom,
+  ordersExhausted,
+  nextRepairCost,
+  playerCoins,
+  onOrdersExhaustedGoHome,
   onSessionExitHome,
   isNoMoves,
-  onShuffleGrid,
-  onNoMovesNewSession,
   onNoMovesExitHome,
-  onReconstructionDeliver,
-  collectionToast,
 }: GameScreenProps) {
-  const reconStage = getCurrentReconstructionStage(progState.reconstruction);
-  const reconBarActive =
-    !isSessionComplete &&
-    !isReconstructionFullyComplete(progState.reconstruction) &&
-    reconStage != null;
-  const reconOrderProg =
-    reconStage && reconStage.requirement.type === "orders"
-      ? reconstructionOrdersProgress(progState.reconstruction, reconStage)
-      : null;
-  const reconCanDeliverItem =
-    reconStage?.requirement.type === "items" &&
-    canDeliverReconstructionItem(progState.reconstruction, state.grid);
+  const [selectionInfoOpen, setSelectionInfoOpen] = useState(false);
+  const [orderItemInfoId, setOrderItemInfoId] = useState<string | null>(null);
+  const [ordersDragging, setOrdersDragging] = useState(false);
+  const [roomOrderBarFlash, setRoomOrderBarFlash] = useState(false);
+  const prevRoomOrderRatioRef = useRef<number>(0);
+  const [cellSize, setCellSize] = useState(() =>
+    typeof window !== "undefined" ? computeGridCellSize(window.innerWidth, gridWidth) : 36
+  );
+
+  useEffect(() => {
+    const calc = () => setCellSize(computeGridCellSize(window.innerWidth, gridWidth));
+    calc();
+    window.addEventListener("resize", calc);
+    return () => window.removeEventListener("resize", calc);
+  }, [gridWidth]);
+
+  const roomOrderRatio =
+    maxMinigameOrdersAtRoom > 0 ? minigameOrdersCompletedAtRoom / maxMinigameOrdersAtRoom : 0;
+  useEffect(() => {
+    if (maxMinigameOrdersAtRoom <= 0) return;
+    const prev = prevRoomOrderRatioRef.current;
+    prevRoomOrderRatioRef.current = roomOrderRatio;
+    if (roomOrderRatio >= 1 && prev < 1) {
+      setRoomOrderBarFlash(true);
+      const t = window.setTimeout(() => setRoomOrderBarFlash(false), 700);
+      return () => window.clearTimeout(t);
+    }
+  }, [roomOrderRatio, maxMinigameOrdersAtRoom]);
+
+  /** Актуальная сетка для нативных слушателей window (вне замыкания React). */
+  const gridSnapshotRef = useRef(state.grid);
+  gridSnapshotRef.current = state.grid;
+
+  const dragRef = useRef<{
+    pointerId: number;
+    from: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
+  const globalDragListenersRef = useRef<{
+    move: (ev: PointerEvent) => void;
+    up: (ev: PointerEvent) => void;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+  const pairDropRef = useRef(onCellPairDrop);
+  pairDropRef.current = onCellPairDrop;
+
+  const ordersScrollRef = useRef<HTMLDivElement>(null);
+  const ordersHorizDragRef = useRef<{ pointerId: number; startX: number; scrollLeft0: number } | null>(null);
+  const [dragGhost, setDragGhost] = useState<{
+    from: number;
+    emoji: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const gridPixelWidth =
+    gridWidth * cellSize + (gridWidth > 0 ? (gridWidth - 1) * GRID_GAP_PX : 0);
+  const gridPixelHeight =
+    gridHeight * cellSize + (gridHeight > 0 ? (gridHeight - 1) * GRID_GAP_PX : 0);
+  const emojiFontPx = Math.min(26, Math.max(12, Math.floor(cellSize * 0.52)));
+
+  function clearGlobalDragListeners() {
+    const L = globalDragListenersRef.current;
+    if (!L) return;
+    window.removeEventListener("pointermove", L.move);
+    window.removeEventListener("pointerup", L.up);
+    window.removeEventListener("pointercancel", L.up);
+    globalDragListenersRef.current = null;
+  }
+
+  useEffect(() => {
+    return () => clearGlobalDragListeners();
+  }, []);
+
+  function onOrdersPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.pointerType !== "mouse" || e.button !== 0) return;
+    const target = e.target;
+    if (
+      target instanceof Element &&
+      target.closest("button, a, input, textarea, select, [role='button']")
+    ) {
+      return;
+    }
+    const el = ordersScrollRef.current;
+    if (!el) return;
+    ordersHorizDragRef.current = { pointerId: e.pointerId, startX: e.clientX, scrollLeft0: el.scrollLeft };
+    setOrdersDragging(true);
+    el.setPointerCapture(e.pointerId);
+  }
+
+  function onOrdersPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const s = ordersHorizDragRef.current;
+    if (!s || e.pointerId !== s.pointerId) return;
+    if (e.cancelable) e.preventDefault();
+    const el = ordersScrollRef.current;
+    if (!el) return;
+    const walk = (e.clientX - s.startX) * 1.5;
+    el.scrollLeft = s.scrollLeft0 - walk;
+  }
+
+  function onOrdersPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    const s = ordersHorizDragRef.current;
+    if (!s || e.pointerId !== s.pointerId) return;
+    ordersHorizDragRef.current = null;
+    setOrdersDragging(false);
+    ordersScrollRef.current?.releasePointerCapture(e.pointerId);
+  }
+
+  function handleGridCellPointerDown(
+    e: React.PointerEvent<HTMLDivElement>,
+    index: number,
+    cell: GridCell
+  ) {
+    suppressClickRef.current = false;
+    if (e.button !== 0) return;
+    if (!cellAllowsGridDragSource(cell)) return;
+    const id = cell.item;
+    if (!id) return;
+    const def = ALL_ITEMS[id];
+    if (!def) return;
+
+    clearGlobalDragListeners();
+
+    dragRef.current = {
+      pointerId: e.pointerId,
+      from: index,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+    };
+
+    const move = (ev: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d || ev.pointerId !== d.pointerId) return;
+      const dist = Math.hypot(ev.clientX - d.startX, ev.clientY - d.startY);
+      if (!d.moved && dist > GRID_DRAG_THRESHOLD_PX) {
+        d.moved = true;
+        const pid = gridSnapshotRef.current[d.from]?.item;
+        const itemDef = pid ? ALL_ITEMS[pid] : undefined;
+        setDragGhost({
+          from: d.from,
+          emoji: itemDef?.emoji ?? "❓",
+          x: ev.clientX,
+          y: ev.clientY,
+        });
+      } else if (d.moved) {
+        setDragGhost((g) => (g ? { ...g, x: ev.clientX, y: ev.clientY } : null));
+      }
+    };
+
+    const up = (ev: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d || ev.pointerId !== d.pointerId) return;
+      clearGlobalDragListeners();
+      if (d.moved) {
+        suppressClickRef.current = true;
+        const el = document.elementFromPoint(ev.clientX, ev.clientY);
+        const wrap = el?.closest("[data-grid-cell-index]");
+        const raw = wrap?.getAttribute("data-grid-cell-index");
+        const toIdx = raw != null ? Number.parseInt(raw, 10) : Number.NaN;
+        if (!Number.isNaN(toIdx) && toIdx >= 0 && toIdx !== d.from) {
+          pairDropRef.current(d.from, toIdx, ev.shiftKey);
+        }
+        setDragGhost(null);
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      }
+      dragRef.current = null;
+    };
+
+    globalDragListenersRef.current = { move, up };
+    window.addEventListener("pointermove", move, { passive: true });
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  }
 
   return (
-    <div className="relative h-[100dvh] w-full max-w-[360px] mx-auto bg-[#F8F9FA] flex flex-col items-center p-2 font-sans select-none overflow-hidden">
+    <div className="flex w-full min-h-[100dvh] justify-center bg-[#F8F9FA] font-sans select-none">
+      <div className="relative flex w-full max-w-md flex-col px-2 py-2">
       <button
         type="button"
         onClick={onToggleDevMode}
@@ -177,16 +395,7 @@ export default function GameScreen({
         </div>
       </div>
 
-      {collectionToast ? (
-        <div
-          className="mb-1.5 w-full flex-shrink-0 rounded-xl border border-violet-100 bg-violet-50 px-2.5 py-2 text-[10px] font-medium leading-snug text-violet-950 shadow-sm whitespace-pre-line"
-          role="status"
-        >
-          {collectionToast}
-        </div>
-      ) : null}
-
-      <div className="mb-1 w-full flex-shrink-0 flex items-center justify-between gap-2 px-0.5">
+      <div className="mb-1 w-full min-w-0 flex-shrink-0 flex flex-wrap items-center justify-between gap-2 px-0.5">
         <button
           type="button"
           onClick={onGoHome}
@@ -194,150 +403,240 @@ export default function GameScreen({
         >
           ← Дом
         </button>
-        <span className="text-[10px] font-bold text-gray-600 tabular-nums">
-          Заказы: {sessionOrdersCompleted}/{sessionOrderGoal}
+        <span className="text-[10px] font-bold text-gray-600 tabular-nums" title="Сколько заказов вы уже выполнили за всё время">
+          Выполнено заказов: {totalOrdersCompleted}
         </span>
       </div>
 
-      {reconBarActive ? (
-        <div className="mb-1.5 w-full flex-shrink-0 rounded-lg border border-violet-200 bg-violet-50/95 px-2 py-1.5 shadow-sm">
-          <div className="mb-0.5 text-[8px] font-black uppercase tracking-wide text-violet-800">
-            Реконструкция
-          </div>
-          {reconOrderProg != null ? (
-            <div className="text-[10px] font-bold leading-tight text-violet-950">
-              {reconStage!.title}: заказы {reconOrderProg.current}/{reconOrderProg.target}
-            </div>
-          ) : reconStage!.requirement.type === "items" ? (
-            <div className="flex items-center justify-between gap-2">
-              <span className="min-w-0 text-[10px] font-bold leading-tight text-violet-950">
-                {reconStage!.title}
+      {/* Заказы: естественная высота карточек + горизонтальный скролл */}
+      <div className="mb-1.5 w-full shrink-0 px-0 py-1">
+        <div
+          ref={ordersScrollRef}
+          className="orders-scroll scroll-touch-x pb-1"
+          style={{
+            WebkitOverflowScrolling: "touch",
+            scrollSnapType: "x mandatory",
+            cursor: ordersDragging ? "grabbing" : "grab",
+          }}
+          onPointerDown={onOrdersPointerDown}
+          onPointerMove={onOrdersPointerMove}
+          onPointerUp={onOrdersPointerUp}
+          onPointerCancel={onOrdersPointerUp}
+        >
+          <div className="flex w-max flex-row items-stretch gap-2 px-1">
+          {state.orders.map((order) => {
+            const canDeliver = orderCanDeliverFromGrid(state.grid, order);
+            const customerEmoji = customerEmojiForOrder(order.id);
+            const reqs = order.requirements.slice(0, 3);
+            return (
+              <div
+                key={order.instanceId}
+                className={`flex shrink-0 flex-col rounded-xl border-2 bg-white p-2 shadow-sm transition-colors duration-150 ${canDeliver ? "border-green-400 bg-green-50/80" : "border-gray-200"}`}
+                style={{
+                  width: "140px",
+                  flexShrink: 0,
+                  scrollSnapAlign: "start",
+                }}
+              >
+                <div className="mb-2 flex items-center justify-center border-b border-gray-100 pb-2">
+                  <span className="text-4xl leading-none" aria-hidden title="Заказчик">
+                    {customerEmoji}
+                  </span>
+                </div>
+                <div className="mb-2 flex flex-wrap items-center justify-center gap-2">
+                  {reqs.map((req) => {
+                    const def = ALL_ITEMS[req.itemId];
+                    const rem = orderRemainingForItem(order, req.itemId);
+                    const rowDone = rem === 0;
+                    const done = req.count - rem;
+                    const onField = orderItemOnOpenGrid(state.grid, req.itemId);
+                    return (
+                      <button
+                        key={req.itemId}
+                        type="button"
+                        onClick={() => setOrderItemInfoId(req.itemId)}
+                        className={`relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl border-2 bg-white text-2xl leading-none shadow-sm transition-transform active:scale-95 ${rowDone ? "border-green-400 opacity-55" : onField ? "border-sky-300 ring-1 ring-sky-200" : "border-amber-100 hover:border-amber-300"}`}
+                        title="Подсказка по предмету"
+                      >
+                        <span aria-hidden>{def?.emoji ?? "❓"}</span>
+                        {rowDone ? (
+                          <span
+                            className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-green-600 text-[10px] font-black text-white"
+                            aria-hidden
+                            title="По этой строке заказа всё сдано"
+                          >
+                            ✓
+                          </span>
+                        ) : onField ? (
+                          <span
+                            className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-sky-500 text-[10px] font-black text-white shadow-sm"
+                            aria-hidden
+                            title="Уже на поле — можно нажать «Отдать»"
+                          >
+                            ✓
+                          </span>
+                        ) : req.count > 1 ? (
+                          <span className="absolute -bottom-0.5 -right-0.5 flex h-4 min-w-[1.1rem] items-center justify-center rounded-full bg-gray-900 px-0.5 text-[8px] font-black text-white tabular-nums">
+                            {done}/{req.count}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex w-full items-center justify-between border-t border-gray-100 pt-2">
+                  <div className="flex items-center gap-0.5">
+                    <Coins className="h-3.5 w-3.5 text-yellow-600" />
+                    <span className="text-[11px] font-bold tabular-nums text-yellow-800">{order.rewardCoins}</span>
+                  </div>
+                  <div className="relative flex justify-end">
+                    {coinFly?.source === "order" && coinFly.orderId === order.id ? (
+                      <span
+                        className="coin-fly pointer-events-none absolute bottom-full left-1/2 z-10 mb-0.5 -translate-x-1/2 whitespace-nowrap"
+                        aria-hidden
+                      >
+                        +{coinFly.amount} 🍪
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => onCompleteOrder(order.id, order.instanceId)}
+                      disabled={!canDeliver}
+                      className={`rounded-lg px-2.5 py-1 text-[9px] font-black uppercase tracking-wide ${canDeliver ? "bg-green-500 text-white shadow-sm" : "cursor-not-allowed bg-gray-100 text-gray-400"}`}
+                    >
+                      Отдать
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {state.orders.length === 0 && ordersExhausted ? (
+            <div
+              className="flex flex-none flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 p-3 text-center"
+              style={{ width: 140, minHeight: 160, flexShrink: 0, scrollSnapAlign: "start" }}
+            >
+              <span className="text-2xl leading-none" aria-hidden>
+                🏠
               </span>
+              <span className="text-xs leading-tight text-amber-800">
+                Отремонтируйте комнату, чтобы получить ещё задания
+              </span>
+              {nextRepairCost != null ? (
+                <span className="text-xs font-bold text-yellow-700 tabular-nums">
+                  🪙 {nextRepairCost}
+                </span>
+              ) : (
+                <span className="text-[10px] text-amber-700/90">Все шаги ремонта в комнате куплены</span>
+              )}
               <button
                 type="button"
-                onClick={onReconstructionDeliver}
-                disabled={!reconCanDeliverItem}
-                className={`flex-shrink-0 rounded-md px-2 py-1 text-[8px] font-black uppercase ${
-                  reconCanDeliverItem
-                    ? "bg-violet-600 text-white shadow-sm"
-                    : "cursor-not-allowed bg-gray-200 text-gray-400"
+                className={`mt-0.5 rounded-lg px-2 py-1 text-xs font-bold shadow-sm ${
+                  nextRepairCost != null && playerCoins >= nextRepairCost
+                    ? "bg-green-500 text-white"
+                    : nextRepairCost != null
+                      ? "cursor-pointer bg-gray-300 text-gray-600"
+                      : "bg-amber-400 text-white"
                 }`}
+                onClick={onOrdersExhaustedGoHome}
               >
-                Сдать
+                {nextRepairCost != null && playerCoins >= nextRepairCost
+                  ? "Ремонтировать →"
+                  : "В хаб →"}
               </button>
             </div>
           ) : null}
+          </div>
         </div>
-      ) : null}
-
-      {/* Orders */}
-      <div className="no-scrollbar mb-1.5 flex w-full flex-shrink-0 gap-2 overflow-x-auto pb-1">
-        {state.orders.map((order) => {
-          const canDeliver = orderCanDeliverFromGrid(state.grid, order);
-          return (
-            <motion.div
-              key={order.id}
-              layout
-              className={`min-w-[6.75rem] max-w-[8.5rem] flex-shrink-0 rounded-lg border-2 bg-white p-1.5 transition-colors ${canDeliver ? "border-green-400 bg-green-50" : "border-gray-100"}`}
+        {!ordersExhausted && maxMinigameOrdersAtRoom > 0 ? (
+          <div className="w-full px-3 pb-1 pt-0.5">
+            <div className="mb-0.5 flex justify-between text-[10px] text-gray-500">
+              <span>Задания комнаты</span>
+              <span className="tabular-nums text-gray-600">
+                {minigameOrdersCompletedAtRoom}/{maxMinigameOrdersAtRoom}
+              </span>
+            </div>
+            <div
+              className={`h-1.5 w-full overflow-hidden rounded-full bg-gray-200 ${roomOrderBarFlash ? "ring-2 ring-amber-300 ring-offset-1 ring-offset-white" : ""}`}
             >
-              <div className="mb-1 space-y-0.5">
-                {order.requirements.map((req) => {
-                  const def = ALL_ITEMS[req.itemId];
-                  const rem = orderRemainingForItem(order, req.itemId);
-                  const done = req.count - rem;
-                  const rowDone = rem === 0;
-                  return (
-                    <div
-                      key={req.itemId}
-                      className={`flex items-center gap-0.5 text-[8px] leading-tight ${rowDone ? "text-green-700" : "text-gray-700"}`}
-                    >
-                      <span className="text-sm leading-none" aria-hidden>
-                        {def?.emoji ?? "•"}
-                      </span>
-                      <span className="min-w-0 flex-1 font-mono font-bold tabular-nums">
-                        {req.itemId}: {done}/{req.count}
-                      </span>
-                      {rowDone ? <CheckCircle2 className="h-3 w-3 shrink-0 text-green-500" /> : null}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex items-center justify-between border-t border-gray-100 pt-1">
-                <div className="flex items-center gap-0.5">
-                  <Coins className="h-2 w-2 text-yellow-600" />
-                  <span className="text-[9px] font-bold">{order.rewardCoins}</span>
-                </div>
-                <div className="relative flex justify-end">
-                  {coinFly?.source === "order" && coinFly.orderId === order.id ? (
-                    <span
-                      className="coin-fly pointer-events-none absolute bottom-full left-1/2 z-10 mb-0.5 -translate-x-1/2 whitespace-nowrap"
-                      aria-hidden
-                    >
-                      +{coinFly.amount} 🍪
-                    </span>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => onCompleteOrder(order.id)}
-                    disabled={!canDeliver}
-                    className={`rounded px-1 py-0.5 text-[7px] font-bold uppercase ${canDeliver ? "bg-green-500 text-white shadow-sm" : "cursor-not-allowed bg-gray-100 text-gray-400"}`}
-                  >
-                    Отдать
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          );
-        })}
+              <motion.div
+                className="h-full rounded-full bg-amber-400"
+                initial={false}
+                animate={{
+                  width: `${Math.min(100, roomOrderRatio * 100)}%`,
+                  opacity: roomOrderBarFlash ? [1, 0.65, 1] : 1,
+                }}
+                transition={{ duration: roomOrderBarFlash ? 0.45 : 0.25 }}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
 
-      {/* Grid */}
-      <div className="flex min-h-0 w-full flex-1 items-center justify-center py-1">
-        <div
-          className="relative w-full max-h-full max-w-full overflow-hidden rounded-[1.25rem] border border-white bg-gray-200 p-1 shadow-inner"
-          style={{ aspectRatio: `${gridWidth} / ${gridHeight}` }}
-        >
+      <OrderItemInfoModal
+        open={orderItemInfoId != null}
+        itemId={orderItemInfoId}
+        onClose={() => setOrderItemInfoId(null)}
+      />
+
+      {/* Поле: квадратные ячейки по ширине экрана, фиксированный размер сетки (страница скроллится при необходимости) */}
+      <div className="flex w-full shrink-0 justify-center px-0.5 pb-1">
+        <div className="relative shrink-0 rounded-[1.25rem] border border-white bg-gray-200 p-1 shadow-inner">
           <div
-            className="grid h-full w-full min-h-0 gap-1"
+            className={`grid shrink-0${dragGhost ? " touch-none" : ""}`}
             style={{
-              gridTemplateColumns: `repeat(${gridWidth}, 1fr)`,
-              gridTemplateRows: `repeat(${gridHeight}, 1fr)`,
+              width: gridPixelWidth,
+              height: gridPixelHeight,
+              gap: GRID_GAP_PX,
+              gridTemplateColumns: `repeat(${gridWidth}, ${cellSize}px)`,
+              gridTemplateRows: `repeat(${gridHeight}, ${cellSize}px)`,
             }}
           >
             {state.grid.map((cell, index) => {
               const itemId = cell.item;
               const item = itemId ? ALL_ITEMS[itemId] : null;
-              const isLocked = cell.cellState === "locked";
-              const isObstacle = isObstacleCellState(cell.cellState);
-              const dirtyClass = dirtyStageClass(cell.cellState);
+              const isBox = cell.cellType === "box";
+              const isCobweb = cell.cellType === "cobweb";
+              const isBlocked = isBlockedCellType(cell.cellType);
               const isSelected = selectedCell === index;
-              const keyUnlockReady =
-                isLocked &&
-                selectedCell !== null &&
-                state.grid[selectedCell]?.item === KEY_ITEM_ID;
               const isShaking =
                 cellShakePair &&
                 (cellShakePair[0] === index || cellShakePair[1] === index);
+              const isDragSource = dragGhost?.from === index;
               const isUnlockFlash = cellUnlockedFlashIndices.includes(index);
-              const isDirtyLootPop = cellDirtyLootFlashIndices.includes(index);
-              const paidCleanable =
-                (cell.cellState === "dirty_1" || cell.cellState === "dirty_2") && paidCleanMode;
+              const canDragFrom = cellAllowsGridDragSource(cell);
               const isGen = Boolean(item && itemIsGenerator(item));
-              const genNoEnergy = isGen && state.energy <= 0;
-              const genBlocked = genNoEnergy;
+              const genBlocked = isGen && state.energy <= 0;
               const isResPickup = Boolean(item && itemIsResourcePickup(item));
               const resIsCoins = Boolean(isResPickup && item && item.grantsCoins > 0);
+              const orderStillNeedsItem =
+                Boolean(itemId) && mergeableItemNeededInOrders(state.orders, itemId);
+              const inOrderReq = Boolean(itemId) && itemIdInAnyOrderRequirement(state.orders, itemId);
+              const showOrderNeedCheckOnGrid =
+                Boolean(itemId && item) &&
+                cell.cellType === "item" &&
+                !isGen &&
+                !isResPickup &&
+                orderStillNeedsItem;
+              const showOrderLineDoneOnGrid =
+                Boolean(itemId && item) &&
+                cell.cellType === "item" &&
+                !isGen &&
+                !isResPickup &&
+                inOrderReq &&
+                !orderStillNeedsItem;
               const cellClasses = [
-                "game-grid-cell relative flex h-full w-full min-h-0 min-w-0 items-center justify-center rounded-md transition-colors duration-200",
-                isLocked
-                  ? `cell-locked ${keyUnlockReady ? "cursor-pointer ring-2 ring-amber-400/90 ring-inset" : "cursor-not-allowed"}`
-                  : isObstacle && dirtyClass !== null
-                    ? `${dirtyClass} ${paidCleanable ? "cursor-pointer ring-1 ring-amber-400/60 ring-inset" : "cursor-not-allowed"}`
+                "game-grid-cell relative flex h-full w-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md transition-colors duration-200",
+                isBox
+                  ? "cell-box cursor-default"
+                  : isCobweb
+                    ? "cell-cobweb cursor-default"
                     : `${isGen && genBlocked ? "cursor-not-allowed" : "cursor-pointer"} ${isSelected ? "cell-selected bg-blue-50" : isGen ? (genBlocked ? "cell-is-generator cell-generator-depleted" : "cell-is-generator") : isResPickup ? (resIsCoins ? "cell-resource-coins" : "cell-resource-energy") : "bg-white/50 hover:bg-white/80"}`,
                 mergePopIndex === index ? "cell-merge-pop" : "",
                 isUnlockFlash ? "cell-unlocked" : "",
-                isDirtyLootPop ? "cell-dirty-loot-pop" : "",
                 isShaking ? "cell-shake" : "",
+                isDragSource ? "opacity-45" : "",
+                canDragFrom ? "touch-none select-none" : "",
               ]
                 .filter(Boolean)
                 .join(" ");
@@ -345,14 +644,27 @@ export default function GameScreen({
                 <div
                   key={index}
                   role="button"
-                  tabIndex={
-                    isLocked ? (keyUnlockReady ? 0 : -1) : isObstacle && !paidCleanable ? -1 : 0
+                  data-grid-cell-index={index}
+                  title={
+                    isCobweb
+                      ? isCobwebUnknownPlaceholder(cell)
+                        ? "Скрыто, пока нет генератора этой комнаты на поле"
+                        : "Под паутиной — сольите такой же предмет, чтобы снять"
+                      : undefined
                   }
-                  aria-disabled={isLocked ? !keyUnlockReady : isObstacle && !paidCleanable}
-                  onClick={(e) => onCellClick(index, e.shiftKey)}
+                  tabIndex={isBlocked || isCobweb ? -1 : 0}
+                  aria-disabled={isBlocked || isCobweb}
+                  onPointerDown={(e) => handleGridCellPointerDown(e, index, cell)}
+                  onClick={(e) => {
+                    if (suppressClickRef.current) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      return;
+                    }
+                    onCellClick(index, e.shiftKey);
+                  }}
                   onKeyDown={(e) => {
-                    if (isLocked && !keyUnlockReady) return;
-                    if (!isLocked && isObstacle && !paidCleanable) return;
+                    if (isBlocked || isCobweb) return;
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       onCellClick(index, e.shiftKey);
@@ -360,19 +672,28 @@ export default function GameScreen({
                   }}
                   className={cellClasses}
                 >
-                  {isLocked ? (
-                    <div
-                      className="pointer-events-none absolute inset-0 z-[1] flex flex-col items-center justify-center gap-0.5 bg-slate-800/25"
-                      aria-hidden
-                    >
-                      <Lock
-                        className="h-7 w-7 text-slate-700 drop-shadow-md sm:h-8 sm:w-8"
-                        strokeWidth={2.25}
+                  {isBox ? (
+                    <>
+                      <div
+                        className="pointer-events-none absolute inset-0 z-[1] rounded-md bg-[#C4A882] shadow-[inset_0_0_0_2px_rgba(100,75,45,0.4)]"
+                        aria-hidden
                       />
-                      <span className="text-[6px] font-black uppercase tracking-wider text-slate-800/90">
-                        Замок
-                      </span>
-                    </div>
+                      {cell.boxIsGenerator ? (
+                        <span
+                          className="pointer-events-none absolute right-0.5 top-0.5 z-[2] text-[10px] leading-none drop-shadow-sm"
+                          title="Здесь новый генератор"
+                          aria-hidden
+                        >
+                          ⚡
+                        </span>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {isCobweb ? (
+                    <div
+                      className="pointer-events-none absolute inset-0 z-[2] rounded-md bg-[repeating-linear-gradient(135deg,rgba(100,116,139,0.35)_0_4px,rgba(148,163,184,0.2)_4px_8px)]"
+                      aria-hidden
+                    />
                   ) : null}
                   {coinFly?.source === "clean" && coinFly.cellIndex === index ? (
                     <span
@@ -382,24 +703,21 @@ export default function GameScreen({
                       +{coinFly.amount} 🍪
                     </span>
                   ) : null}
-                  <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="relative z-[5] flex items-center justify-center overflow-hidden">
                     <AnimatePresence mode="popLayout">
                       {item && (
-                        <motion.div
+                        <motion.span
                           key={`${itemId}-${index}`}
                           initial={{
                             scale: 0,
                             opacity: 0,
-                            rotate: isDirtyLootPop ? -14 : 0,
+                            rotate: 0,
                           }}
                           animate={{ scale: 1, opacity: 1, rotate: 0 }}
                           exit={{ scale: 0, opacity: 0 }}
-                          transition={
-                            isDirtyLootPop
-                              ? { type: "spring", stiffness: 420, damping: 17 }
-                              : { duration: 0.2 }
-                          }
-                          className={`pointer-events-none text-2xl sm:text-3xl md:text-4xl ${
+                          transition={{ duration: 0.2 }}
+                          style={{ fontSize: emojiFontPx }}
+                          className={`pointer-events-none inline-flex select-none items-center justify-center leading-none ${
                             isGen && !genBlocked
                               ? "drop-shadow-[0_2px_6px_rgba(139,92,246,0.65)]"
                               : isResPickup
@@ -410,10 +728,27 @@ export default function GameScreen({
                           }`}
                         >
                           {item.emoji}
-                        </motion.div>
+                        </motion.span>
                       )}
                     </AnimatePresence>
                   </div>
+                  {showOrderNeedCheckOnGrid ? (
+                    <span
+                      className="pointer-events-none absolute left-0.5 top-0.5 z-[11] flex h-4 w-4 items-center justify-center rounded-full bg-sky-500 text-[10px] font-black text-white shadow-sm"
+                      aria-hidden
+                      title="Ещё нужен для заказа"
+                    >
+                      ✓
+                    </span>
+                  ) : showOrderLineDoneOnGrid ? (
+                    <span
+                      className="pointer-events-none absolute left-0.5 top-0.5 z-[11] flex h-4 w-4 items-center justify-center rounded-full bg-green-600 text-[10px] font-black text-white shadow-sm"
+                      aria-hidden
+                      title="По заказам эта позиция уже закрыта — можно отдать другие"
+                    >
+                      ✓
+                    </span>
+                  ) : null}
                   {item && itemIsResourcePickup(item) ? (
                     <div
                       className={`absolute bottom-0.5 right-0.5 z-10 rounded border px-0.5 text-[6px] font-black shadow-sm tabular-nums ${
@@ -425,59 +760,69 @@ export default function GameScreen({
                     >
                       {item.grantsCoins > 0 ? `+${item.grantsCoins}` : `+${item.grantsEnergy}`}
                     </div>
-                  ) : item && !itemIsGenerator(item) && itemId !== KEY_ITEM_ID ? (
+                  ) : item && !itemIsGenerator(item) && !itemIsResourcePickup(item) ? (
                     <div className="absolute bottom-0.5 right-0.5 z-10 rounded bg-white/90 px-0.5 text-[6px] font-black text-gray-500 shadow-sm">
-                      L{item.level}
+                      L{isCobweb ? cell.itemLevel : item.level}
                     </div>
                   ) : null}
                   {isGen ? (
                     <div
-                      className={`pointer-events-none absolute bottom-0.5 left-0.5 z-10 text-[8px] font-black leading-none ${
-                        genBlocked ? "text-gray-500/90" : "text-violet-700/90"
-                      }`}
-                      title={genNoEnergy ? "Нет энергии" : "Генератор"}
+                      className="pointer-events-none absolute bottom-0.5 right-0.5 z-10 rounded bg-sky-600 px-0.5 text-[7px] font-black leading-none text-white shadow-sm tabular-nums"
+                      title={genBlocked ? "Нужна энергия ⚡" : "Тап по генератору — создать предмет (−1 ⚡)"}
                     >
-                      ⚡
+                      ⚡{state.energy}
                     </div>
                   ) : null}
                 </div>
               );
             })}
           </div>
+          {dragGhost ? (
+            <div
+              aria-hidden
+              className="pointer-events-none fixed z-[80] text-xl sm:text-2xl drop-shadow-[0_4px_12px_rgba(0,0,0,0.35)]"
+              style={{
+                left: dragGhost.x,
+                top: dragGhost.y,
+                transform: "translate(-50%, -50%)",
+              }}
+            >
+              {dragGhost.emoji}
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <div className="mt-1.5 flex w-full flex-shrink-0 items-center gap-2 px-2">
-        <div className="flex min-h-[44px] min-w-0 flex-1 items-center justify-center rounded-xl border border-violet-200/80 bg-violet-50 px-2 py-2">
-          <p className="text-center text-[10px] font-bold leading-snug text-violet-900">
-            🧺 генератор · 🔑 замок · 🪙/⚡ награда — клик, чтобы забрать
-          </p>
-        </div>
-
+      <div className="mt-1.5 flex w-full shrink-0 items-center justify-end gap-2 px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
         <button
           type="button"
-          onClick={onTogglePaidCleanMode}
-          aria-label={paidCleanMode ? "Выключить очистку за монеты" : "Очистка грязи за монеты"}
-          aria-pressed={paidCleanMode}
-          title="Очистка за монеты или Shift+клик по грязной клетке"
-          className={`flex-shrink-0 rounded-lg border p-2.5 shadow-sm transition-colors ${
-            paidCleanMode
-              ? "border-amber-400 bg-amber-100 text-amber-800"
-              : "border-gray-100 bg-white text-gray-500 hover:text-amber-600"
-          }`}
+          onClick={() => setSelectionInfoOpen(true)}
+          className="flex-shrink-0 rounded-lg border border-gray-100 bg-white p-2.5 text-amber-600 shadow-sm transition-colors hover:bg-amber-50 hover:text-amber-700"
+          aria-label="Информация о выделенной клетке"
+          title="О выделенном предмете или генераторе (повторный клик по генератору — выдача)"
         >
-          <Coins className="h-5 w-5" />
+          <CircleAlert className="h-5 w-5" strokeWidth={2.25} />
         </button>
 
         <button
           type="button"
           onClick={onOpenTutorial}
           className="flex-shrink-0 rounded-lg border border-gray-100 bg-white p-2.5 text-gray-400 shadow-sm transition-colors hover:text-blue-500"
-          aria-label="Справка"
+          aria-label="Справка по игре"
         >
           <HelpCircle className="h-5 w-5" />
         </button>
       </div>
+
+      <GameSelectionInfoModal
+        open={selectionInfoOpen}
+        onClose={() => setSelectionInfoOpen(false)}
+        selectedCell={selectedCell}
+        grid={state.grid}
+        progState={progState}
+        energy={state.energy}
+        maxEnergy={state.maxEnergy}
+      />
 
       <style>{`
         .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -560,58 +905,12 @@ export default function GameScreen({
         .cell-unlocked {
           animation: cell-unlock-flash 0.3s ease-out forwards;
         }
-        @keyframes dirty-loot-reveal {
-          0% {
-            transform: scale(1);
-            box-shadow: inset 0 0 0 0 transparent, 0 0 0 0 rgba(52, 211, 153, 0);
-          }
-          45% {
-            transform: scale(1.06);
-            box-shadow:
-              inset 0 0 12px rgba(167, 243, 208, 0.55),
-              0 0 18px 4px rgba(52, 211, 153, 0.45);
-          }
-          100% {
-            transform: scale(1);
-            box-shadow: inset 0 0 0 0 transparent, 0 0 0 0 transparent;
-          }
+        .cell-box {
+          background: #c4a882;
         }
-        .cell-dirty-loot-pop {
-          animation: dirty-loot-reveal 0.48s cubic-bezier(0.34, 1.45, 0.64, 1);
-          z-index: 6;
-        }
-        .cell-locked {
-          background: linear-gradient(160deg, rgba(148, 163, 184, 0.45), rgba(100, 116, 139, 0.55));
-          box-shadow: inset 0 0 0 2px rgba(51, 65, 85, 0.55);
-        }
-        /* Препятствия: та же диагональная «blocked»-эстетика; dirty_2 тяжелее, dirty_1 светлее */
-        .cell-dirty-2 {
-          background-color: rgba(51, 65, 85, 0.88);
-          background-image: repeating-linear-gradient(
-            -36deg,
-            rgba(15, 23, 42, 0.28),
-            rgba(15, 23, 42, 0.28) 4px,
-            transparent 4px,
-            transparent 8px
-          );
-          box-shadow:
-            inset 0 0 0 2px rgba(15, 23, 42, 0.75),
-            inset 0 2px 6px rgba(0, 0, 0, 0.25);
-          color: rgba(255, 255, 255, 0.9);
-        }
-        .cell-dirty-1 {
-          background-color: rgba(71, 85, 105, 0.7);
-          background-image: repeating-linear-gradient(
-            -36deg,
-            rgba(15, 23, 42, 0.16),
-            rgba(15, 23, 42, 0.16) 4px,
-            transparent 4px,
-            transparent 8px
-          );
-          box-shadow:
-            inset 0 0 0 2px rgba(100, 116, 139, 0.5),
-            inset 0 2px 4px rgba(0, 0, 0, 0.14);
-          color: rgba(255, 255, 255, 0.88);
+        .cell-cobweb {
+          background: linear-gradient(165deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.92));
+          box-shadow: inset 0 0 0 2px rgba(148, 163, 184, 0.35);
         }
         @keyframes coin-fly {
           0% { transform: translateY(0) scale(1); opacity: 1; }
@@ -625,42 +924,7 @@ export default function GameScreen({
         }
       `}</style>
 
-      {isSessionComplete ? (
-        <div
-          className="absolute inset-0 z-40 flex items-center justify-center bg-black/45 px-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="session-complete-title"
-        >
-          <div className="w-full max-w-[280px] rounded-2xl bg-white p-5 text-center shadow-xl">
-            <h2 id="session-complete-title" className="mb-2 text-lg font-black text-gray-900">
-              Сессия завершена!
-            </h2>
-            <p className="mb-4 text-sm text-gray-600">
-              Выполнено заказов:{" "}
-              <span className="font-bold tabular-nums text-gray-800">
-                {sessionOrdersCompleted} / {sessionOrderGoal}
-              </span>
-            </p>
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={onSessionNewGame}
-                className="w-full rounded-xl bg-green-500 py-3 text-sm font-bold text-white shadow-md active:bg-green-600"
-              >
-                Продолжить
-              </button>
-              <button
-                type="button"
-                onClick={onSessionExitHome}
-                className="w-full rounded-xl border-2 border-gray-200 bg-white py-3 text-sm font-bold text-gray-800 shadow-sm active:bg-gray-50"
-              >
-                Выйти домой
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : isNoMoves ? (
+      {isNoMoves ? (
         <div
           className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center px-4"
           aria-live="polite"
@@ -671,24 +935,14 @@ export default function GameScreen({
             aria-labelledby="no-moves-title"
             className="pointer-events-auto w-full max-w-[280px] rounded-2xl border border-gray-200 bg-white/95 p-5 text-center shadow-xl"
           >
-            <h2 id="no-moves-title" className="mb-4 text-lg font-black text-gray-900">
+            <h2 id="no-moves-title" className="mb-2 text-lg font-black text-gray-900">
               Нет доступных ходов
             </h2>
+            <p className="mb-4 text-xs text-gray-600">
+              Сливайте одинаковые предметы, выполняйте заказы и используйте генератор (нужна энергия ⚡ и свободная
+              клетка).
+            </p>
             <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={onShuffleGrid}
-                className="w-full rounded-xl border-2 border-gray-200 bg-white py-3 text-sm font-bold text-gray-800 shadow-sm active:bg-gray-50"
-              >
-                Перемешать поле
-              </button>
-              <button
-                type="button"
-                onClick={onNoMovesNewSession}
-                className="w-full rounded-xl bg-blue-500 py-3 text-sm font-bold text-white shadow-md active:bg-blue-600"
-              >
-                Начать новую сессию
-              </button>
               <button
                 type="button"
                 onClick={onNoMovesExitHome}
@@ -700,6 +954,7 @@ export default function GameScreen({
           </div>
         </div>
       ) : null}
+      </div>
     </div>
   );
 }

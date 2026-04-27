@@ -138,13 +138,16 @@ const ROOM_UPGRADES: Upgrade[] = [
   v("terrace_sunlounger", "Шезлонг", "terrace", 780, 14, "Солнце по расписанию"),
 
   // Office 12+
+  v("office_rug", "Ковёр", "office", 700, 12, "Мягко у рабочего угла"),
   v("office_desk", "Стол", "office", 980, 12, "Рабочее место"),
-  v("office_books", "Книги", "office", 850, 12, "Полки забиты знаниями"),
-  v("office_computer", "Компьютер", "office", 1250, 13, "Современная связь"),
-  v("office_chair", "Кресло", "office", 920, 13, "Удобно сидеть часами"),
-  v("office_lamp", "Настольная лампа", "office", 720, 14, "Свет на документах"),
-  v("office_shelf", "Стеллаж", "office", 890, 14, "Порядок в бумагах"),
-  v("office_art", "Постер", "office", 760, 15, "Вдохновение на стене"),
+  v("office_task_chair", "Кресло офисное", "office", 950, 12, "Сиденье на весь день"),
+  v("office_computer", "Компьютер", "office", 1250, 13, "Связь с миром на столе"),
+  v("office_sofa", "Диван", "office", 1100, 13, "Можно выдохнуть между делами"),
+  v("office_coffee_table", "Кофейный столик", "office", 850, 13, "Чай и договоры в зоне отдыха"),
+  v("office_chair", "Кресло обычное", "office", 920, 14, "Удобно присесть гостю"),
+  v("office_globe", "Глобус", "office", 720, 14, "Планета на ладони"),
+  v("office_cabinet", "Шкаф", "office", 890, 14, "Документы и книги под замком"),
+  v("office_painting", "Картина", "office", 760, 15, "Характер кабинета на стене"),
   v("office_clock", "Настенные часы", "office", 680, 15, "Время под контролем"),
 
   // Lounge 14+
@@ -219,6 +222,10 @@ const LEGACY_UPGRADE_ID_MAP: Record<string, string> = {
   kitchen_hood: "kitchen_sink",
   bathroom_towels: "bathroom_toilet",
   terrace_furniture: "terrace_table",
+  office_books: "office_cabinet",
+  office_shelf: "office_cabinet",
+  office_lamp: "office_coffee_table",
+  office_art: "office_painting",
 };
 
 const REMOVED_UPGRADE_IDS = new Set<string>([

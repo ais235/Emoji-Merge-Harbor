@@ -20,40 +20,50 @@ export function rarityForMergeableLevel(level: number, chainItemCount: number): 
 /** Ссылка на предмет в ячейке сетки (совпадает с id из ALL_ITEMS). */
 export type Item = ItemId;
 
-export type CellState = "normal" | "dirty_1" | "dirty_2" | "locked";
+/**
+ * Тип клетки поля (Merge Hotel Empire).
+ * - box — закрытый ящик; cobweb — предмет под паутиной (виден, не тянется как источник).
+ */
+export type CellType = "empty" | "item" | "generator" | "box" | "cobweb";
 
-/** Временно: любая не-normal клетка ведёт себя как препятствие (грязь, замок). */
-export function isObstacleCellState(cellState: CellState): boolean {
-  return cellState !== "normal";
+/** Открытые клетки: ходы, генератор, выдача заказов только с `item`. */
+export function isOpenCellType(t: CellType): boolean {
+  return t === "empty" || t === "item" || t === "generator";
 }
 
-/** id предмета-ключа и цепочки (не участвуют в заказах и луте с грязи). */
-export const KEY_ITEM_ID = "key";
-export const KEY_CHAIN_ID = "key_chain";
+/** Нельзя положить предмет / обменять (ящик). Паутина обрабатывается отдельно при слиянии. */
+export function isBlockedCellType(t: CellType): boolean {
+  return t === "box";
+}
+
+/** @deprecated Используйте isBlockedCellType(cell.cellType) или !isOpenCellType. */
+export function isObstacleCellState(cellType: CellType): boolean {
+  return isBlockedCellType(cellType);
+}
 
 export interface GridCell {
+  cellType: CellType;
   item: Item | null;
-  cellState: CellState;
-  /** Оставшиеся выдачи для генератора (`item` с `isGenerator`); для прочих клеток не используется. */
-  generatorCharges?: number;
+  /** Уровень предмета (для cobweb — видимый уровень под паутиной; для empty/box — 0). */
+  itemLevel: number;
+  /** Цепочка слияния (`ITEM_CHAINS`), для генератора — `spawnsChainId`. */
+  chainId: string | null;
+  /** Содержимое закрытого ящика (скрыто до открытия слиянием). Только для `cellType === "box"`. */
+  boxItem: Item | null;
+  boxItemLevel: number;
+  boxChainId: string | null;
+  /** Ящик при открытии превращается в генератор (`boxGeneratorId`), а не в cobweb. */
+  boxIsGenerator: boolean;
+  /** Id предмета-генератора из `ALL_ITEMS` (как у стартовой клетки). */
+  boxGeneratorId: string | null;
 }
 
-/** Стартовое число зарядов при появлении генератора на поле. */
-export const INITIAL_GENERATOR_CHARGES = 5;
-
-/**
- * Сколько выдач осталось у генератора в этой клетке (0 — не активен).
- * `maxCharges` — фактический максимум с учётом апгрейдов (см. getGeneratorMaxCharges).
- */
-export function cellGeneratorChargesRemaining(cell: GridCell, maxCharges: number): number {
-  if (!cell.item) return 0;
-  const d = ALL_ITEMS[cell.item];
-  if (!d || !itemIsGenerator(d)) return 0;
-  const cap = Math.max(INITIAL_GENERATOR_CHARGES, maxCharges);
-  const c = cell.generatorCharges;
-  if (typeof c === "number") return Math.max(0, Math.min(c, cap));
-  return cap;
+export function isCobwebUnknownPlaceholder(cell: GridCell): boolean {
+  return cell.cellType === "cobweb" && cell.item === COBWEB_UNKNOWN_ITEM_ID;
 }
+
+/** Одновременно активных заказов на экране миниигры. */
+export const MAX_ACTIVE_ORDERS = 3;
 
 /** Навигация без роутера */
 /** `menu` — только кнопки; `hub` — уровень, реконструкция, задания, комнаты. */
@@ -166,6 +176,9 @@ export const DIRTY_LOOT_RESOURCE_CHANCE = 0.28;
 /** Шанс генератора выдать ресурс вместо предмета 1 уровня. */
 export const GENERATOR_RESOURCE_DROP_CHANCE = 0.12;
 
+/** Паутина-заглушка: цепочка ещё без генератора; `boxChainId` / `boxItemLevel` — заложенный лут. */
+export const COBWEB_UNKNOWN_ITEM_ID = "cobweb_unknown";
+
 export interface ItemChain {
   id: string;
   name: string;
@@ -179,6 +192,8 @@ export interface OrderRequirement {
 
 export interface Order {
   id: string;
+  /** Стабильный id экземпляра заказа в сессии (для React key и сдачи по нужной карточке). */
+  instanceId: string;
   requirements: OrderRequirement[];
   /** Сдано по одному предмету; ключи — itemId из requirements. */
   delivered: Partial<Record<ItemId, number>>;
@@ -197,19 +212,24 @@ export function orderIsFulfilled(order: Order): boolean {
   return order.requirements.every((r) => orderRemainingForItem(order, r.itemId) === 0);
 }
 
-/** Есть ли на поле предмет, который ещё можно сдать по этому заказу. */
+/** Есть ли на поле предмет, который ещё можно сдать по этому заказу (только открытая `item`, не cobweb). */
 export function orderCanDeliverFromGrid(grid: GridCell[], order: Order): boolean {
   for (const r of order.requirements) {
-    if (orderRemainingForItem(order, r.itemId) > 0 && grid.some((c) => c.item === r.itemId)) return true;
+    if (
+      orderRemainingForItem(order, r.itemId) > 0 &&
+      grid.some((c) => c.cellType === "item" && c.item === r.itemId)
+    ) {
+      return true;
+    }
   }
   return false;
 }
 
-/** Первая клетка с предметом, подходящим для текущего прогресса заказа. */
+/** Первая клетка с предметом для сдачи заказа (только `item`). */
 export function findFirstCellIndexForOrderDelivery(grid: GridCell[], order: Order): number {
   for (let i = 0; i < grid.length; i++) {
     const id = grid[i].item;
-    if (id != null && orderRemainingForItem(order, id) > 0) return i;
+    if (id != null && grid[i].cellType === "item" && orderRemainingForItem(order, id) > 0) return i;
   }
   return -1;
 }
@@ -266,6 +286,12 @@ export interface ProgressionState {
   collectedItems: Partial<Record<ItemId, boolean>>;
   /** Полнота цепочки уже награждена (монеты в progression, энергия начислялась в момент выдачи). */
   collectionChainRewardsClaimed: Partial<Record<string, boolean>>;
+  /** Всего выполненных заказов миниигры (награды каждые 5 / 20; не сбрасывается). */
+  totalOrdersCompleted: number;
+  /** Макс. уровень mergeable-предмета, который игрок уже «видел» на поле (для недостижимых заказов). */
+  maxSeenItemLevel: number;
+  /** Выполнено заказов миниигры на текущем уровне ремонта комнаты (сброс при новом визуальном апгрейде этой зоны). */
+  minigameOrdersAtRoomRepair: Partial<Record<ActiveZone, number>>;
 }
 
 /** Игровая сцена (поле, энергия, заказы). coins / level / xp — только в ProgressionState. */
@@ -455,23 +481,6 @@ export const ITEM_CHAINS: Record<string, ItemChain> = {
       },
     ],
   },
-  [KEY_CHAIN_ID]: {
-    id: KEY_CHAIN_ID,
-    name: "Ключи",
-    items: [
-      {
-        id: KEY_ITEM_ID,
-        name: "Ключ",
-        emoji: "🔑",
-        level: 1,
-        chain: KEY_CHAIN_ID,
-        xpReward: 0,
-        coinReward: 0,
-        rarity: rarityForMergeableLevel(1, 1),
-        description: "Этот ключ явно от чего-то важного.",
-      },
-    ],
-  },
   ...ROOM_ITEM_CHAINS_MAP,
 };
 
@@ -505,9 +514,11 @@ export function chainsForSessionDirtyLoot(zone: ActiveZone): ItemChain[] {
   return list.filter((c): c is ItemChain => Boolean(c));
 }
 
-/** Цепочки для заказов и случайного лута (без ключей). */
+/** Цепочки для заказов и случайного лута (только mergeable-предметы, без генераторов). */
 export function chainsEligibleForLootAndOrders(): ItemChain[] {
-  return Object.values(ITEM_CHAINS).filter((c) => c.id !== KEY_CHAIN_ID);
+  return Object.values(ITEM_CHAINS).filter((c) =>
+    c.items.some((it) => "level" in it && !itemIsGenerator(it) && !itemIsResourcePickup(it))
+  );
 }
 
 const ALL_ITEMS_FROM_CHAINS: Record<ItemId, ItemDefinition> = Object.values(ITEM_CHAINS).reduce(
@@ -553,6 +564,19 @@ const GENERATOR_ITEMS: Record<ItemId, ItemDefinition> = {
   ...ROOM_ZONE_GENERATORS,
 };
 
+const META_GRID_ITEMS: Record<ItemId, MergeableItemDefinition> = {
+  [COBWEB_UNKNOWN_ITEM_ID]: {
+    id: COBWEB_UNKNOWN_ITEM_ID,
+    name: "Скрытый предмет",
+    emoji: "❓",
+    level: 1,
+    chain: "meta_cobweb",
+    xpReward: 0,
+    coinReward: 0,
+    rarity: "common",
+  },
+};
+
 const RESOURCE_PICKUP_ITEMS: Record<ItemId, ItemDefinition> = {
   [COIN_PICKUP_ITEM_ID]: {
     id: COIN_PICKUP_ITEM_ID,
@@ -584,4 +608,44 @@ export const ALL_ITEMS: Record<ItemId, ItemDefinition> = {
   ...ALL_ITEMS_FROM_CHAINS,
   ...GENERATOR_ITEMS,
   ...RESOURCE_PICKUP_ITEMS,
+  ...META_GRID_ITEMS,
 };
+
+/** Цепочки слияний по генераторам на сетке (`spawnsChainId`). */
+export function chainsFromGridGenerators(grid: GridCell[]): ItemChain[] {
+  const seen = new Set<string>();
+  const out: ItemChain[] = [];
+  for (const c of grid) {
+    if (c.cellType !== "generator" || !c.item) continue;
+    const d = ALL_ITEMS[c.item];
+    if (!d || !itemIsGenerator(d)) continue;
+    const chId = d.spawnsChainId;
+    if (!chId) continue;
+    const chain = ITEM_CHAINS[chId];
+    if (!chain) continue;
+    if (!seen.has(chain.id)) {
+      seen.add(chain.id);
+      out.push(chain);
+    }
+  }
+  return out;
+}
+
+/** Id цепочек (`spawnsChainId`), для которых на поле уже стоит генератор. */
+export function activeSpawnsChainIdsFromGrid(grid: GridCell[]): Set<string> {
+  const s = new Set<string>();
+  for (const c of grid) {
+    if (c.cellType !== "generator" || !c.item) continue;
+    const d = ALL_ITEMS[c.item];
+    if (d && itemIsGenerator(d) && d.spawnsChainId) s.add(d.spawnsChainId);
+  }
+  return s;
+}
+
+/** Заказы миниигры: только цепочки с текущих генераторов; иначе — цепочка комнаты. */
+export function chainsForSessionOrders(grid: GridCell[], zone: ActiveZone): ItemChain[] {
+  const fromGrid = chainsFromGridGenerators(grid);
+  if (fromGrid.length > 0) return fromGrid;
+  const ch = ITEM_CHAINS[mergeChainIdForZone(zone)];
+  return ch ? [ch] : [ITEM_CHAINS.fruit];
+}
