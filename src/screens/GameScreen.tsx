@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Zap, Coins, Star, CircleAlert, HelpCircle, Home } from "lucide-react";
+import { CircleAlert, HelpCircle } from "lucide-react";
 import {
   ALL_ITEMS,
   isCobwebUnknownPlaceholder,
@@ -20,14 +20,13 @@ import {
   type CoinFlyState,
 } from "../types";
 import GameSelectionInfoModal from "../components/GameSelectionInfoModal";
+import { GameHeader } from "../components/GameHeader";
 import OrderItemInfoModal from "../components/OrderItemInfoModal";
 import MergeBurstParticles from "../components/MergeBurstParticles";
 import { OrderCard } from "../components/OrderCard";
 import {
   ENERGY_AD_REWARD,
-  ENERGY_COIN_PACK_AMOUNT,
   ENERGY_COIN_PACK_COST,
-  ENERGY_REGEN_INTERVAL_MS,
 } from "../gameBalance";
 
 const GRID_DRAG_THRESHOLD_PX = 12;
@@ -62,7 +61,10 @@ export interface GameScreenProps {
   progState: ProgressionState;
   showOrderCoinBonus: boolean;
   devMode: boolean;
-  xpProgressPercent: number;
+  /** До следующей +1 энергии (считает родитель, тик раз в секунду в игре) */
+  msUntilNextEnergy: number;
+  /** XP до следующего уровня (знаменатель полосы опыта) */
+  xpToNextLevel: number;
   onGoHome: () => void;
   onCellClick: (index: number, shiftKey?: boolean) => void;
   /** Слияние/обмен как второй шаг, но через перетаскивание с from на to. */
@@ -83,7 +85,6 @@ export interface GameScreenProps {
   onToggleGameSound?: () => void;
   gridWidth: number;
   gridHeight: number;
-  totalOrdersCompleted: number;
   /** Лимит заказов миниигры для текущей комнаты (ремонт в хабе). */
   minigameOrdersCompletedAtRoom: number;
   maxMinigameOrdersAtRoom: number;
@@ -102,8 +103,6 @@ export interface GameScreenProps {
   onWatchAdEnergy: () => void;
   /** Купить энергию за монеты. */
   onBuyEnergyForCoins: () => void;
-  /** Название комнаты в топбаре. */
-  roomDisplayName: string;
 }
 
 export default function GameScreen({
@@ -111,7 +110,8 @@ export default function GameScreen({
   progState,
   showOrderCoinBonus,
   devMode,
-  xpProgressPercent,
+  msUntilNextEnergy,
+  xpToNextLevel,
   onGoHome,
   onCellClick,
   onCellPairDrop,
@@ -128,7 +128,6 @@ export default function GameScreen({
   onToggleGameSound,
   gridWidth,
   gridHeight,
-  totalOrdersCompleted,
   minigameOrdersCompletedAtRoom,
   maxMinigameOrdersAtRoom,
   ordersExhausted,
@@ -140,7 +139,6 @@ export default function GameScreen({
   onNoMovesExitHome,
   onWatchAdEnergy,
   onBuyEnergyForCoins,
-  roomDisplayName,
 }: GameScreenProps) {
   const [selectionInfoOpen, setSelectionInfoOpen] = useState(false);
   const [orderItemInfoId, setOrderItemInfoId] = useState<string | null>(null);
@@ -163,21 +161,6 @@ export default function GameScreen({
     ro.observe(el);
     return () => ro.disconnect();
   }, [gridWidth]);
-
-  const [energyUiTick, setEnergyUiTick] = useState(0);
-  useEffect(() => {
-    const id = window.setInterval(() => setEnergyUiTick((n) => n + 1), 15_000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  const energyRegenHint = useMemo(() => {
-    void energyUiTick;
-    if (state.energy >= state.maxEnergy) return "";
-    const elapsed = Date.now() - state.lastEnergyRegenAt;
-    const msUntil = ENERGY_REGEN_INTERVAL_MS - (elapsed % ENERGY_REGEN_INTERVAL_MS);
-    const minutesLeft = Math.max(1, Math.ceil(msUntil / 60_000));
-    return `+1 через ${minutesLeft}м`;
-  }, [state.energy, state.maxEnergy, state.lastEnergyRegenAt, energyUiTick]);
 
   const roomOrderRatio =
     maxMinigameOrdersAtRoom > 0 ? minigameOrdersCompletedAtRoom / maxMinigameOrdersAtRoom : 0;
@@ -329,87 +312,23 @@ export default function GameScreen({
             ×2 бонус монет
           </div>
         ) : null}
-        <header className="ds-topbar rounded-none px-1">
-          <button type="button" onClick={onGoHome} className="ds-pill-home shrink-0 gap-1">
-            <Home className="h-4 w-4 shrink-0" aria-hidden />
-            Дом
-          </button>
-          <h1 className="ds-topbar-title">{roomDisplayName}</h1>
-          <div className="flex w-[7.75rem] shrink-0 flex-col items-end gap-0.5">
-            <div className="ds-stat-pill">
-              <Zap className="h-3 w-3 shrink-0" style={{ color: "var(--c-bluedark)" }} aria-hidden />
-              <span className="tabular-nums">
-                {state.energy}/{state.maxEnergy}
-              </span>
-            </div>
-            <div className="flex min-h-[14px] w-full items-center justify-end">
-              <span
-                className="ds-regen-hint max-w-[5.5rem] text-right leading-tight"
-                style={{ opacity: energyRegenHint ? 1 : 0 }}
-                aria-hidden={!energyRegenHint}
-              >
-                {energyRegenHint || "\u00a0"}
-              </span>
-            </div>
-            <div className="flex min-h-[30px] w-full items-center justify-end">
-              <button
-                type="button"
-                onClick={onBuyEnergyForCoins}
-                disabled={progState.coins < ENERGY_COIN_PACK_COST || state.energy >= state.maxEnergy}
-                tabIndex={state.energy >= state.maxEnergy ? -1 : 0}
-                className="max-w-[7.5rem] rounded-[6px] border px-1 py-0.5 text-left text-[8px] font-medium leading-tight transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-                style={{
-                  borderColor: "var(--c-peach2)",
-                  background: "var(--c-cream)",
-                  color: "var(--c-browndark)",
-                  visibility: state.energy < state.maxEnergy ? "visible" : "hidden",
-                }}
-                aria-hidden={state.energy >= state.maxEnergy}
-              >
-                +{ENERGY_COIN_PACK_AMOUNT} за {ENERGY_COIN_PACK_COST} 🍪
-              </button>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => onToggleGameSound?.()}
-                className="shrink-0 rounded-md p-0.5 text-[14px] leading-none opacity-85 hover:opacity-100"
-                style={{ background: "transparent", border: "none", cursor: "pointer" }}
-                title={soundOn ? "Выключить звук" : "Включить звук"}
-                aria-label={soundOn ? "Выключить звук" : "Включить звук"}
-              >
-                {soundOn ? "🔊" : "🔇"}
-              </button>
-              <div id="header-coin-icon" className="ds-stat-pill mt-0.5 inline-flex origin-center">
-                <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
-                <span className="tabular-nums">{progState.coins}</span>
-              </div>
-            </div>
-          </div>
-        </header>
-      </div>
-
-      <div className="mb-1.5 flex min-h-[44px] w-full flex-shrink-0 items-center justify-between gap-2 px-0.5">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <Star className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
-          <span className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
-            Уровень {progState.level}
-          </span>
-          <div className="ds-progress min-w-0 flex-1 max-w-[120px]">
-            <motion.div
-              className="ds-progress__fill ds-progress__fill--gold"
-              initial={{ width: 0 }}
-              animate={{ width: `${Math.min(xpProgressPercent, 100)}%` }}
-            />
-          </div>
-        </div>
-        <span
-          className="shrink-0 text-[9px] font-medium tabular-nums"
-          style={{ color: "var(--c-muted)" }}
-          title="Сколько заказов вы уже выполнили за всё время"
-        >
-          Заказов всего: {totalOrdersCompleted}
-        </span>
+        <GameHeader
+          zone={state.playZone}
+          energy={state.energy}
+          maxEnergy={state.maxEnergy}
+          msUntilNextEnergy={msUntilNextEnergy}
+          coins={progState.coins}
+          playerLevel={progState.level}
+          playerXP={progState.xp}
+          nextLevelXP={xpToNextLevel}
+          ordersCompleted={minigameOrdersCompletedAtRoom}
+          maxOrders={maxMinigameOrdersAtRoom}
+          onGoHome={onGoHome}
+          onBuyEnergy={onBuyEnergyForCoins}
+          canAffordEnergy={progState.coins >= ENERGY_COIN_PACK_COST}
+          soundOn={soundOn}
+          onToggleSound={onToggleGameSound}
+        />
       </div>
 
       <div className="mb-1.5 w-full shrink-0">
@@ -464,13 +383,7 @@ export default function GameScreen({
         )}
         {!ordersExhausted && maxMinigameOrdersAtRoom > 0 ? (
           <div className="w-full px-0.5 pb-1 pt-1">
-            <div className="mb-0.5 flex justify-between text-[10px] font-medium" style={{ color: "var(--c-muted)" }}>
-              <span>Заказы</span>
-              <span className="tabular-nums" style={{ color: "var(--c-brown)" }}>
-                {minigameOrdersCompletedAtRoom} / {maxMinigameOrdersAtRoom}
-              </span>
-            </div>
-            <div className="ds-progress w-full">
+            <div className="ds-progress w-full" aria-label={`Прогресс заказов комнаты: ${minigameOrdersCompletedAtRoom} из ${maxMinigameOrdersAtRoom}`}>
               <motion.div
                 className="ds-progress__fill ds-progress__fill--green"
                 initial={false}

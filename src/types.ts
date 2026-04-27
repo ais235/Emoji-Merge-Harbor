@@ -101,6 +101,19 @@ export const ALL_ACTIVE_ZONES: ActiveZone[] = [
   "garden",
 ];
 
+/** Отображаемые названия комнат на экране миниигры и в UI */
+export const ZONE_NAMES: Record<ActiveZone, string> = {
+  hall: "Основной зал",
+  kitchen: "Кухня",
+  bedroom: "Спальня",
+  bathroom: "Ванная",
+  terrace: "Терраса",
+  secret: "Тайная комната",
+  office: "Кабинет",
+  lounge: "Бар / лаунж",
+  garden: "Сад",
+};
+
 export function isActiveZone(x: unknown): x is ActiveZone {
   return typeof x === "string" && (ALL_ACTIVE_ZONES as string[]).includes(x);
 }

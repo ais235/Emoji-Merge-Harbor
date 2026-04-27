@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
 import { flushSync } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { Play, Star } from "lucide-react";
@@ -1692,6 +1692,21 @@ export default function App() {
     });
   }, [activeZone, state?.isFirstLaunch]);
 
+  /** Тик раз в секунду для пересчёта ms до следующей энергии на экране игры — должен быть до early return (Rules of Hooks). */
+  const [gameEnergyMsTick, setGameEnergyMsTick] = useState(0);
+  useEffect(() => {
+    if (currentScreen !== "game") return;
+    const id = window.setInterval(() => setGameEnergyMsTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [currentScreen]);
+
+  const msUntilNextEnergy = useMemo(() => {
+    if (!state || state.energy >= state.maxEnergy) return 0;
+    void gameEnergyMsTick;
+    const elapsed = Date.now() - state.lastEnergyRegenAt;
+    return ENERGY_REGEN_INTERVAL_MS - (elapsed % ENERGY_REGEN_INTERVAL_MS);
+  }, [state, gameEnergyMsTick]);
+
   if (!state || !progState) {
     return (
       <div
@@ -1856,7 +1871,8 @@ export default function App() {
           progState={progState}
           showOrderCoinBonus={showOrderCoinBonus}
           devMode={devMode}
-          xpProgressPercent={progress}
+          msUntilNextEnergy={msUntilNextEnergy}
+          xpToNextLevel={xpToNextLevel}
           selectedCell={selectedCell}
           onGoHome={() => {
             setShowTutorial(false);
@@ -1880,7 +1896,6 @@ export default function App() {
           }}
           gridWidth={GRID_WIDTH}
           gridHeight={GRID_HEIGHT}
-          totalOrdersCompleted={progState.totalOrdersCompleted}
           minigameOrdersCompletedAtRoom={minigameOrdersCompletedInRoom(progState, state.playZone)}
           maxMinigameOrdersAtRoom={maxMinigameOrdersForZone(state.playZone, progState.purchasedUpgrades)}
           ordersExhausted={
@@ -1896,9 +1911,6 @@ export default function App() {
           onNoMovesExitHome={handleNoMovesExitHome}
           onWatchAdEnergy={handleWatchAdEnergy}
           onBuyEnergyForCoins={handleBuyEnergyForCoins}
-          roomDisplayName={
-            HUB_ZONES.find((z) => z.id === state.playZone)?.displayName ?? "Комната"
-          }
         />
         </div>
       )}
