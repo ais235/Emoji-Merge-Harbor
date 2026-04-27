@@ -6,10 +6,9 @@
 import React from "react";
 import { Zap, Coins, Star } from "lucide-react";
 import { motion } from "motion/react";
-import type { ActiveZone, ReconstructionState } from "../types";
+import type { ActiveZone } from "../types";
 import { progressZoneId } from "../types";
 import { HUB_ZONES, roomFurnitureProgress } from "../progressionData";
-import ReconstructionPanel from "../components/ReconstructionPanel";
 
 export interface CafeHubScreenProps {
   energy: number;
@@ -28,7 +27,6 @@ export interface CafeHubScreenProps {
   onOpenDaily: () => void;
   onOpenCoinShop?: () => void;
   onOpenCollection?: () => void;
-  reconstruction: ReconstructionState;
   onBackToMenu: () => void;
   onPlay: () => void;
   repairNudgeZone?: ActiveZone | null;
@@ -52,7 +50,6 @@ export default function CafeHubScreen({
   onOpenDaily,
   onOpenCoinShop,
   onOpenCollection,
-  reconstruction,
   onBackToMenu,
   onPlay,
   repairNudgeZone = null,
@@ -65,7 +62,7 @@ export default function CafeHubScreen({
       : "";
 
   return (
-    <div className="ds-screen flex flex-col overflow-hidden">
+    <div className="ds-screen ds-screen-hub flex min-h-0 flex-col overflow-hidden">
       <header className="ds-topbar">
         <button type="button" onClick={onBackToMenu} className="ds-pill-home shrink-0">
           ← Меню
@@ -87,7 +84,7 @@ export default function CafeHubScreen({
         </motion.button>
       </header>
 
-      <div className="no-scrollbar scroll-touch-y min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 pb-0">
+      <div className="no-scrollbar scroll-touch-y min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <div className="ds-card-peach mb-3">
           <div className="flex items-center justify-between gap-2">
             <div className="ds-stat-pill shrink-0">
@@ -116,8 +113,6 @@ export default function CafeHubScreen({
             </div>
           </div>
         </div>
-
-        <ReconstructionPanel reconstruction={reconstruction} />
 
         <div className="ds-hub-util-grid mb-3">
           <button type="button" onClick={onOpenDaily} className="relative ds-hub-util-btn">

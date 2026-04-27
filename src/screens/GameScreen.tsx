@@ -21,6 +21,7 @@ import {
 } from "../types";
 import GameSelectionInfoModal from "../components/GameSelectionInfoModal";
 import OrderItemInfoModal from "../components/OrderItemInfoModal";
+import MergeBurstParticles from "../components/MergeBurstParticles";
 import { OrderCard } from "../components/OrderCard";
 import {
   ENERGY_AD_REWARD,
@@ -61,13 +62,12 @@ export interface GameScreenProps {
   progState: ProgressionState;
   showOrderCoinBonus: boolean;
   devMode: boolean;
-  onToggleDevMode: () => void;
   xpProgressPercent: number;
   onGoHome: () => void;
   onCellClick: (index: number, shiftKey?: boolean) => void;
   /** Слияние/обмен как второй шаг, но через перетаскивание с from на to. */
   onCellPairDrop: (from: number, to: number, shiftKey: boolean) => void;
-  onCompleteOrder: (orderId: string, orderInstanceId: string) => void;
+  onCompleteOrder: (orderId: string, orderInstanceId: string, deliverButtonRect?: DOMRect) => void;
   onOpenTutorial: () => void;
   selectedCell: number | null;
   mergePopIndex: number | null;
@@ -77,6 +77,10 @@ export interface GameScreenProps {
   cellUnlockHeavyFlash?: boolean;
   cellShakePair: [number, number] | null;
   coinFly: CoinFlyState | null;
+  /** Ячейка слияния — частицы в portal */
+  mergeBurstCellIndex?: number | null;
+  soundOn?: boolean;
+  onToggleGameSound?: () => void;
   gridWidth: number;
   gridHeight: number;
   totalOrdersCompleted: number;
@@ -107,7 +111,6 @@ export default function GameScreen({
   progState,
   showOrderCoinBonus,
   devMode,
-  onToggleDevMode,
   xpProgressPercent,
   onGoHome,
   onCellClick,
@@ -120,6 +123,9 @@ export default function GameScreen({
   cellUnlockHeavyFlash = false,
   cellShakePair,
   coinFly,
+  mergeBurstCellIndex = null,
+  soundOn = true,
+  onToggleGameSound,
   gridWidth,
   gridHeight,
   totalOrdersCompleted,
@@ -309,19 +315,6 @@ export default function GameScreen({
         ref={gameColumnRef}
         className="relative mx-auto box-border flex w-full max-w-[min(100%,var(--app-content-max))] flex-col px-2 py-2"
       >
-      <button
-        type="button"
-        onClick={onToggleDevMode}
-        className={`absolute right-1 top-1 z-30 min-h-[36px] rounded-[var(--ds-radius-btn)] border px-2 py-1 text-[9px] font-medium ${
-          devMode
-            ? "border-[var(--c-green)] bg-[var(--c-green)] text-white"
-            : "border-[var(--c-peach2)] bg-[var(--c-peach)] text-[var(--c-brown)]"
-        }`}
-        title="Режим разработчика"
-        aria-pressed={devMode}
-      >
-        {devMode ? "Dev: вкл" : "Dev: выкл"}
-      </button>
       <div className="relative z-[1] mb-1 w-full flex-shrink-0">
         {showOrderCoinBonus ? (
           <div
@@ -336,7 +329,7 @@ export default function GameScreen({
             ×2 бонус монет
           </div>
         ) : null}
-        <header className="ds-topbar rounded-none pl-1 pr-1 pt-11">
+        <header className="ds-topbar rounded-none px-1">
           <button type="button" onClick={onGoHome} className="ds-pill-home shrink-0 gap-1">
             <Home className="h-4 w-4 shrink-0" aria-hidden />
             Дом
@@ -376,9 +369,21 @@ export default function GameScreen({
                 +{ENERGY_COIN_PACK_AMOUNT} за {ENERGY_COIN_PACK_COST} 🍪
               </button>
             </div>
-            <div className="ds-stat-pill mt-0.5">
-              <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
-              <span className="tabular-nums">{progState.coins}</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => onToggleGameSound?.()}
+                className="shrink-0 rounded-md p-0.5 text-[14px] leading-none opacity-85 hover:opacity-100"
+                style={{ background: "transparent", border: "none", cursor: "pointer" }}
+                title={soundOn ? "Выключить звук" : "Включить звук"}
+                aria-label={soundOn ? "Выключить звук" : "Включить звук"}
+              >
+                {soundOn ? "🔊" : "🔇"}
+              </button>
+              <div id="header-coin-icon" className="ds-stat-pill mt-0.5 inline-flex origin-center">
+                <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+                <span className="tabular-nums">{progState.coins}</span>
+              </div>
             </div>
           </div>
         </header>
@@ -452,7 +457,7 @@ export default function GameScreen({
                 showCoinFly={coinFly?.source === "order" && coinFly.orderId === order.id}
                 coinFlyAmount={coinFly?.source === "order" && coinFly.orderId === order.id ? coinFly.amount : 0}
                 onItemInfo={(id) => setOrderItemInfoId(id)}
-                onDeliver={onCompleteOrder}
+                onDeliver={(id, inst, rect) => onCompleteOrder(id, inst, rect)}
               />
             ))}
           </div>
@@ -776,6 +781,7 @@ export default function GameScreen({
           </div>
         </div>
       ) : null}
+      <MergeBurstParticles cellIndex={mergeBurstCellIndex} />
       </div>
     </div>
   );

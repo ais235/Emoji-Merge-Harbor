@@ -27,6 +27,23 @@
   --ds-tap-ms: 150ms;
 }
 
+/* Монеты долетели до хедера — лёгкий pop у счётчика */
+.coin-pulse {
+  animation: coinPulse 0.32s ease-out;
+}
+
+@keyframes coinPulse {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.28);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
 html {
   -webkit-tap-highlight-color: transparent;
 }
@@ -117,6 +134,15 @@ body {
   min-height: 100svh;
   background: var(--c-cream);
   user-select: none;
+}
+
+/** Хаб «Дом»: фиксированная высота окна + прокрутка контента внутри (иначе список комнат раздувает страницу). */
+.ds-screen.ds-screen-hub {
+  min-height: 0;
+  height: 100dvh;
+  height: 100svh;
+  max-height: 100dvh;
+  max-height: 100svh;
 }
 
 /* ─── Топбар ─── */

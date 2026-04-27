@@ -76,6 +76,8 @@ import { StoryEngine } from "./story/StoryEngine";
 import { STORY_BEATS } from "./story/storyData";
 import type { StoryBeat } from "./story/storyData";
 import { initAudio, initSoundPreferenceFromStorage, isSoundMuted, setSoundMuted, sounds } from "./utils/sounds";
+import { playSfx } from "./utils/playSfx";
+import CoinFlyBurst, { type CoinFlyBurstSpec } from "./components/CoinFlyBurst";
 import { pickEmptyCellForGeneratorSpawn } from "./utils/grid";
 import { hasEffectiveMoves } from "./utils/availableMoves";
 import { migrateLegacyGridCell } from "./utils/gridUnlockHelpers";
@@ -661,6 +663,8 @@ export default function App() {
   const [cellUnlockHeavyFlash, setCellUnlockHeavyFlash] = useState(false);
   const [cellShakePair, setCellShakePair] = useState<[number, number] | null>(null);
   const [coinFly, setCoinFly] = useState<CoinFlyState | null>(null);
+  const [coinFlyBurst, setCoinFlyBurst] = useState<CoinFlyBurstSpec | null>(null);
+  const [mergeBurstCellIndex, setMergeBurstCellIndex] = useState<number | null>(null);
   /** Нет эффективных ходов (слияние / заказ / спавн при энергии); UI мягкий, ввод не блокируем. */
   const [isNoMoves, setIsNoMoves] = useState(false);
   const [purchaseSparkleNonce, setPurchaseSparkleNonce] = useState(0);
@@ -958,6 +962,13 @@ export default function App() {
   }, [dailyQuests]);
 
   useEffect(() => {
+    if (currentScreen !== "game") {
+      setCoinFlyBurst(null);
+      setMergeBurstCellIndex(null);
+    }
+  }, [currentScreen]);
+
+  useEffect(() => {
     initSoundPreferenceFromStorage();
     setSoundOn(!isSoundMuted());
   }, []);
@@ -1084,10 +1095,13 @@ export default function App() {
         setSelectedCell(null);
         setLastAction({ type: "merge", index: to });
         updateQuestProgress("merge", 1);
-        sounds.merge();
+        playSfx("merge_pop", 0.48);
+        setMergeBurstCellIndex(to);
+        window.setTimeout(() => setMergeBurstCellIndex(null), 620);
         setCellMergePopIndex(to);
         window.setTimeout(() => setCellMergePopIndex(null), 350);
         if (opened.openedCellIndices.length > 0) {
+          playSfx("box_open", 0.32);
           const heavy = Boolean(opened.unlockedGeneratorItemId);
           setCellUnlockHeavyFlash(heavy);
           setCellUnlockedFlashIndices(opened.openedCellIndices);
@@ -1184,6 +1198,7 @@ export default function App() {
     newGrid[spawnIdx] = withSyncedItemMeta(itemGridCell(spawnItemId));
     newGrid[index] = { ...cell };
     const bulk = registerCollectiblesBulk(progState, [spawnItemId]);
+    playSfx("generator_tap", 0.42);
     setProgState(bumpMaxSeenItemLevelFromGrid(bulk.nextProg, newGrid));
     setState({
       ...state,
@@ -1191,7 +1206,6 @@ export default function App() {
       energy: Math.min(state.maxEnergy, Math.max(0, state.energy - 1) + bulk.totalEnergyFromChains),
     });
     setLastAction({ type: "spawn", index: spawnIdx });
-    sounds.select();
     return true;
   };
 
@@ -1252,7 +1266,7 @@ export default function App() {
     [state, progState, applyGridPairInteraction]
   );
 
-  const handleCompleteOrder = (orderId: string, orderInstanceId: string) => {
+  const handleCompleteOrder = (orderId: string, orderInstanceId: string, anchorRect?: DOMRect) => {
     if (!state || !progState) return;
 
     type FulfilledMeta = {
@@ -1419,9 +1433,19 @@ export default function App() {
     setOrdersCompleted((c) => c + 1);
     updateQuestProgress("order", 1);
     updateQuestProgress("coins", fulfilledMeta.finalCoins);
-    sounds.orderComplete();
-    setCoinFly({ source: "order", orderId: fulfilledMeta.flyOrderId, amount: fulfilledMeta.finalCoins });
-    window.setTimeout(() => setCoinFly(null), 800);
+    playSfx("order_complete", 0.52);
+    if (anchorRect) {
+      const n = 7;
+      setCoinFlyBurst({
+        id: Date.now(),
+        cx: anchorRect.left + anchorRect.width / 2,
+        cy: anchorRect.top + anchorRect.height / 2,
+        count: n,
+      });
+    } else {
+      setCoinFly({ source: "order", orderId: fulfilledMeta.flyOrderId, amount: fulfilledMeta.finalCoins });
+      window.setTimeout(() => setCoinFly(null), 800);
+    }
   };
 
   const handleReconstructionDeliver = () => {
@@ -1743,7 +1767,9 @@ export default function App() {
         </div>
       )}
       {currentScreen === "hub" && (
-        <div className={screenEntering ? "screen-entering h-[100dvh]" : "h-[100dvh]"}>
+        <div
+          className={`${screenEntering ? "screen-entering " : ""}flex min-h-0 h-[100dvh] max-h-[100dvh] flex-col overflow-hidden`}
+        >
           <CafeHubScreen
             energy={state.energy}
             maxEnergy={state.maxEnergy}
@@ -1772,7 +1798,6 @@ export default function App() {
             onOpenDaily={() => setCurrentScreen("daily")}
             onOpenCoinShop={() => setCoinShopOpen(true)}
             onOpenCollection={() => setCurrentScreen("collection")}
-            reconstruction={progState.reconstruction}
             onBackToMenu={handleBackToMainMenu}
             onPlay={handlePlayFromHub}
           />
@@ -1831,7 +1856,6 @@ export default function App() {
           progState={progState}
           showOrderCoinBonus={showOrderCoinBonus}
           devMode={devMode}
-          onToggleDevMode={handleToggleDevMode}
           xpProgressPercent={progress}
           selectedCell={selectedCell}
           onGoHome={() => {
@@ -1847,6 +1871,13 @@ export default function App() {
           cellUnlockHeavyFlash={cellUnlockHeavyFlash}
           cellShakePair={cellShakePair}
           coinFly={coinFly}
+          mergeBurstCellIndex={mergeBurstCellIndex}
+          soundOn={soundOn}
+          onToggleGameSound={() => {
+            const next = !soundOn;
+            setSoundMuted(!next);
+            setSoundOn(next);
+          }}
           gridWidth={GRID_WIDTH}
           gridHeight={GRID_HEIGHT}
           totalOrdersCompleted={progState.totalOrdersCompleted}
@@ -1988,6 +2019,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      <CoinFlyBurst burst={coinFlyBurst} onFinished={() => setCoinFlyBurst(null)} />
     </>
   );
 }

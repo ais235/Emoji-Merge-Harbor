@@ -19,7 +19,7 @@ export interface OrderCardProps {
   showCoinFly: boolean;
   coinFlyAmount: number;
   onItemInfo: (itemId: string) => void;
-  onDeliver: (orderId: string, orderInstanceId: string) => void;
+  onDeliver: (orderId: string, orderInstanceId: string, deliverButtonRect?: DOMRect) => void;
 }
 
 export function OrderCard({
@@ -96,7 +96,7 @@ export function OrderCard({
               background: "#4CAF50",
               cursor: "pointer",
             }}
-            onClick={() => onDeliver(order.id, order.instanceId)}
+            onClick={(e) => onDeliver(order.id, order.instanceId, e.currentTarget.getBoundingClientRect())}
           >
             Отдать
           </button>
