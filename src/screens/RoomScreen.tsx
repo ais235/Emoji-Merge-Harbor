@@ -4,7 +4,7 @@
  */
 
 import React, { useCallback, useLayoutEffect, useState } from "react";
-import { Coins } from "lucide-react";
+import { Home, Coins } from "lucide-react";
 import RoomCanvas from "../components/RoomCanvas";
 import RoomLayoutEditorPanel from "../components/RoomLayoutEditorPanel";
 import { HUB_ZONES, UPGRADES } from "../progressionData";
@@ -29,7 +29,6 @@ export interface RoomScreenProps {
   onBack: () => void;
   onPurchaseUpgrade: (upgradeId: string) => void;
   purchaseSparkleNonce: number;
-  /** Реплика после покупки в этой комнате (сбрасывается из App). */
   purchaseToast?: string | null;
 }
 
@@ -50,9 +49,7 @@ export default function RoomScreen({
 
   const roomVisual = getRoomVisual(activeZone);
   const layers = roomVisual?.layers ?? [];
-  const placedCount = layers.filter((l) =>
-    progState.purchasedUpgrades.includes(l.upgradeId)
-  ).length;
+  const placedCount = layers.filter((l) => progState.purchasedUpgrades.includes(l.upgradeId)).length;
   const totalLayers = layers.length;
 
   const roomEditorAllowed = isRoomLayoutEditorEnabled();
@@ -97,29 +94,23 @@ export default function RoomScreen({
     roomEditorOpen && draftLayers ? draftLayers : (roomVisual?.layers ?? []);
 
   return (
-    <div className="mx-auto flex h-[100dvh] w-full max-w-[360px] flex-col overflow-hidden bg-[#F8F9FA] p-2 font-sans select-none">
-      <div className="mb-2 flex flex-shrink-0 items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={onBack}
-          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-blue-600 shadow-sm"
-        >
-          ← Назад
+    <div className="ds-screen flex flex-col overflow-hidden p-2">
+      <header className="ds-topbar -mx-2 -mt-2 mb-2 rounded-none px-2">
+        <button type="button" onClick={onBack} className="ds-pill-home shrink-0 gap-1.5">
+          <Home className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
+          Дом
         </button>
-        <div
-          className="flex min-w-0 items-center gap-1.5 rounded-full border border-yellow-100 bg-yellow-50 px-2.5 py-1.5 shadow-sm"
-          title="Монеты (печенья) — всего сейчас"
-        >
-          <Coins className="h-3.5 w-3.5 shrink-0 fill-yellow-600 text-yellow-600" aria-hidden />
-          <span className="truncate text-xs font-black tabular-nums text-yellow-800">{progState.coins}</span>
+        <h1 className="ds-topbar-title">{zoneTitle(activeZone)}</h1>
+        <div className="ds-stat-pill shrink-0" title="Монеты">
+          <Coins className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+          <span className="truncate font-medium tabular-nums">{progState.coins}</span>
         </div>
-      </div>
-
-      <h1 className="mb-2 text-xl font-black text-gray-900">{zoneTitle(activeZone)}</h1>
+      </header>
 
       {purchaseToast ? (
         <p
-          className="mb-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] font-medium leading-snug text-amber-950 shadow-sm"
+          className="ds-card mb-2 text-[11px] font-medium leading-snug"
+          style={{ color: "var(--c-browndark)" }}
           role="status"
         >
           {purchaseToast}
@@ -128,17 +119,13 @@ export default function RoomScreen({
 
       {totalLayers > 0 ? (
         <>
-          <p className="mb-1.5 text-center text-[12px] text-gray-500">
+          <p className="mb-2 text-center text-[11px] font-medium" style={{ color: "var(--c-brown)" }}>
             Обустроено: {placedCount} из {totalLayers} предметов
           </p>
 
           {roomEditorAllowed ? (
             <div className="mb-2 flex justify-center">
-              <button
-                type="button"
-                onClick={toggleRoomEditor}
-                className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-bold text-violet-900 shadow-sm"
-              >
+              <button type="button" onClick={toggleRoomEditor} className="ds-btn-secondary min-h-0 py-2 text-[11px]">
                 {roomEditorOpen ? "Скрыть редактор раскладки" : "Редактор раскладки"}
               </button>
             </div>
@@ -156,7 +143,10 @@ export default function RoomScreen({
             />
           ) : null}
 
-          <div className="mb-3 w-full flex-shrink-0">
+          <div
+            className="mb-3 w-full shrink-0 overflow-hidden rounded-[var(--ds-radius-card)] border p-1.5"
+            style={{ background: "var(--c-peach)", borderColor: "var(--c-peach2)" }}
+          >
             {effectiveVisual ? (
               <RoomCanvas
                 roomVisual={effectiveVisual}
@@ -185,7 +175,10 @@ export default function RoomScreen({
           </div>
         </>
       ) : (
-        <div className="mb-3 flex h-[220px] w-full flex-shrink-0 items-center justify-center rounded-2xl border border-gray-200 bg-gray-100 text-sm text-gray-500">
+        <div
+          className="mb-3 flex h-[220px] w-full shrink-0 items-center justify-center rounded-[var(--ds-radius-card)] border text-[12px] font-medium"
+          style={{ background: "var(--c-peach)", borderColor: "var(--c-peach2)", color: "var(--c-muted)" }}
+        >
           Нет сцены для этой зоны
         </div>
       )}
@@ -193,16 +186,21 @@ export default function RoomScreen({
       <div className="no-scrollbar scroll-touch-y flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-2">
         {purchasedHere.length > 0 ? (
           <section>
-            <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
+            <h2 className="mb-2 text-[11px] font-medium" style={{ color: "var(--c-muted)" }}>
               Уже в комнате
             </h2>
             <ul className="flex flex-wrap gap-1.5">
               {purchasedHere.map((u) => (
                 <li
                   key={u.id}
-                  className="rounded-lg border border-green-100 bg-green-50/90 px-2 py-1 text-[10px] font-semibold text-green-900"
+                  className="rounded-[var(--ds-radius-btn)] border px-2 py-1.5 text-[10px] font-medium"
+                  style={{
+                    background: "var(--c-peach)",
+                    borderColor: "var(--c-peach2)",
+                    color: "var(--c-browndark)",
+                  }}
                 >
-                  ✓ {u.name}
+                  <span style={{ color: "var(--c-green)" }}>✓</span> {u.name}
                 </li>
               ))}
             </ul>
@@ -210,39 +208,40 @@ export default function RoomScreen({
         ) : null}
 
         <section>
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
+          <h2 className="mb-2 text-[11px] font-medium" style={{ color: "var(--c-muted)" }}>
             Купить
           </h2>
           {availableHere.length === 0 ? (
-            <p className="text-xs text-gray-400">Все улучшения этой зоны уже куплены.</p>
+            <p className="text-[12px] font-medium" style={{ color: "var(--c-muted)" }}>
+              Все улучшения этой зоны уже куплены.
+            </p>
           ) : (
             <ul className="space-y-2">
               {availableHere.map((u) => {
                 const isUnlocked = progState.level >= u.requiredLevel;
                 const canAfford = progState.coins >= u.cost;
-                const zoneUnlocked =
-                  u.zone === "meta" || progState.unlockedZones.includes(u.zone);
+                const zoneUnlocked = u.zone === "meta" || progState.unlockedZones.includes(u.zone);
                 const canBuy = isUnlocked && canAfford && zoneUnlocked;
 
                 return (
-                  <li
-                    key={u.id}
-                    className="rounded-xl border border-gray-100 bg-white p-3 shadow-sm"
-                  >
-                    <div className="mb-1 font-bold text-gray-900">{u.name}</div>
-                    <p className="mb-2 text-[11px] text-gray-500">{u.description}</p>
-                    <div className="mb-2 text-xs font-bold text-gray-700">
-                      🍪 {u.cost}
+                  <li key={u.id} className="ds-card">
+                    <div className="mb-1 text-[13px] font-medium" style={{ color: "var(--c-browndark)" }}>
+                      {u.name}
+                    </div>
+                    <p className="mb-2 text-[11px] font-medium leading-snug" style={{ color: "var(--c-brown)" }}>
+                      {u.description}
+                    </p>
+                    <div className="mb-2 flex items-center gap-1 text-[12px] font-medium">
+                      <span style={{ color: "var(--c-gold)" }} aria-hidden>
+                        🍪
+                      </span>
+                      <span style={{ color: "var(--c-golddark)" }}>{u.cost}</span>
                     </div>
                     <button
                       type="button"
                       disabled={!canBuy}
                       onClick={() => onPurchaseUpgrade(u.id)}
-                      className={`w-full rounded-lg py-2 text-xs font-bold uppercase ${
-                        canBuy
-                          ? "bg-blue-500 text-white shadow-sm active:bg-blue-600"
-                          : "cursor-not-allowed bg-gray-100 text-gray-400"
-                      }`}
+                      className={`w-full ${canBuy ? "ds-btn-primary" : "ds-btn-secondary ds-btn-disabled"}`}
                     >
                       {!zoneUnlocked
                         ? `Нужна зона: ${u.zone}`

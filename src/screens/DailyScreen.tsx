@@ -4,6 +4,7 @@
  */
 
 import React, { useEffect, useState } from "react";
+import { Home } from "lucide-react";
 import { DAILY_REWARDS } from "../components/DailyBonusModal";
 import {
   DAILY_QUESTS,
@@ -50,54 +51,48 @@ export default function DailyScreen({
     return () => window.clearInterval(id);
   }, []);
 
-  const lastRaw = typeof localStorage !== "undefined"
-    ? localStorage.getItem(LAST_DAILY_BONUS_KEY)
-    : null;
+  const lastRaw = typeof localStorage !== "undefined" ? localStorage.getItem(LAST_DAILY_BONUS_KEY) : null;
   const lastTs = lastRaw ? Number(lastRaw) : null;
   const eligible =
-    !lastTs ||
-    Number.isNaN(lastTs) ||
-    nowTick - lastTs > 20 * 60 * 60 * 1000;
-  const nextClaimAt = lastTs && !Number.isNaN(lastTs)
-    ? lastTs + 20 * 60 * 60 * 1000
-    : 0;
+    !lastTs || Number.isNaN(lastTs) || nowTick - lastTs > 20 * 60 * 60 * 1000;
+  const nextClaimAt = lastTs && !Number.isNaN(lastTs) ? lastTs + 20 * 60 * 60 * 1000 : 0;
   const countdownMs = Math.max(0, nextClaimAt - nowTick);
 
   return (
-    <div className="mx-auto flex h-[100dvh] w-full max-w-[360px] flex-col overflow-hidden bg-[#F8F9FA] font-sans select-none">
-      <header className="relative flex flex-shrink-0 items-center justify-center border-b border-gray-100 bg-white px-2 py-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="absolute left-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-600"
-        >
-          ← Назад
+    <div className="ds-screen flex flex-col overflow-hidden">
+      <header className="ds-topbar">
+        <button type="button" onClick={onBack} className="ds-pill-home shrink-0 gap-1.5">
+          <Home className="h-4 w-4 shrink-0" aria-hidden />
+          Дом
         </button>
-        <h1 className="text-sm font-black uppercase tracking-wide text-gray-900">
-          Задания
-        </h1>
+        <h1 className="ds-topbar-title">Задания</h1>
+        <span className="ds-topbar-spacer" aria-hidden />
       </header>
 
       <div className="no-scrollbar scroll-touch-y min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
-        {/* Секция 1: ежедневный бонус */}
-        <section className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-xs font-bold uppercase tracking-wide text-gray-500">
+        <section className="ds-card">
+          <h2 className="mb-3 text-[11px] font-medium" style={{ color: "var(--c-muted)" }}>
             Ежедневный вход
           </h2>
-          <div className="mb-4 flex justify-center gap-2">
+          <div className="mb-4 flex flex-wrap justify-center gap-2">
             {[1, 2, 3, 4, 5, 6, 7].map((i) => {
               const past = i < safeStreak;
               const current = i === safeStreak;
               return (
                 <div
                   key={i}
-                  className={`flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-black ${
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-[10px] font-medium"
+                  style={
                     past
-                      ? "bg-green-500 text-white"
+                      ? { background: "var(--c-green)", color: "#fff" }
                       : current
-                        ? "bg-blue-500 text-white"
-                        : "bg-gray-200 text-gray-500"
-                  }`}
+                        ? { background: "var(--c-rosedark)", color: "#fff" }
+                        : {
+                            background: "var(--c-peach)",
+                            border: "1px solid var(--c-peach2)",
+                            color: "var(--c-muted)",
+                          }
+                  }
                 >
                   {i}
                 </div>
@@ -106,71 +101,64 @@ export default function DailyScreen({
           </div>
           {eligible ? (
             <>
-              <p className="mb-2 text-center text-sm text-gray-700">
-                Награда: 🍪 {rewardToday.coins} ⚡ {rewardToday.energy}
+              <p className="mb-2 text-center text-[12px] font-medium" style={{ color: "var(--c-browndark)" }}>
+                Награда: 🍪 {rewardToday.coins} · ⚡ {rewardToday.energy}
               </p>
-              <button
-                type="button"
-                onClick={() =>
-                  onClaimDailyBonus(rewardToday.coins, rewardToday.energy)
-                }
-                className="w-full rounded-xl bg-blue-500 py-3 text-sm font-bold text-white shadow-md active:bg-blue-600"
-              >
+              <button type="button" onClick={() => onClaimDailyBonus(rewardToday.coins, rewardToday.energy)} className="ds-btn-primary w-full">
                 Забрать бонус
               </button>
             </>
           ) : (
-            <p className="text-center text-sm text-gray-600">
+            <p className="text-center text-[12px] font-medium" style={{ color: "var(--c-brown)" }}>
               Следующий бонус через {formatCountdown(countdownMs)}
             </p>
           )}
         </section>
 
-        {/* Секция 2: ежедневные задания */}
         <section>
-          <h2 className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-gray-500">
+          <h2 className="mb-2 px-1 text-[11px] font-medium" style={{ color: "var(--c-muted)" }}>
             Ежедневные задания
           </h2>
           <div className="space-y-3">
             {DAILY_QUESTS.map((task) => {
-              const prog =
-                quests.progress[task.id as keyof typeof quests.progress];
+              const prog = quests.progress[task.id as keyof typeof quests.progress];
               const done = prog >= task.goal;
               const claimed = quests.claimed.includes(task.id);
               const pct = Math.min(100, (prog / task.goal) * 100);
 
               return (
-                <div
-                  key={task.id}
-                  className="rounded-2xl border border-gray-100 bg-white p-3 shadow-sm"
-                >
+                <div key={task.id} className="ds-card">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex min-w-0 items-start gap-2">
                       <span className="text-xl" aria-hidden>
                         {task.icon}
                       </span>
                       <div>
-                        <div className="font-bold text-gray-900">
+                        <div className="text-[13px] font-medium" style={{ color: "var(--c-browndark)" }}>
                           {task.text}
                         </div>
-                        <div className="text-xs text-gray-500">
+                        <div className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
                           Награда: 🍪 {task.reward}
                         </div>
                       </div>
                     </div>
-                    <div className="flex-shrink-0 text-xs font-bold text-gray-600">
+                    <div className="shrink-0 text-[11px] font-medium tabular-nums" style={{ color: "var(--c-brown)" }}>
                       {Math.min(prog, task.goal)} / {task.goal}
                     </div>
                   </div>
-                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-100">
-                    <div
-                      className="h-full rounded-full bg-blue-500 transition-all"
-                      style={{ width: `${pct}%` }}
-                    />
+                  <div className="ds-progress mt-2 w-full">
+                    <div className="ds-progress__fill ds-progress__fill--blue" style={{ width: `${pct}%` }} />
                   </div>
                   <div className="mt-2 flex justify-end">
                     {claimed ? (
-                      <span className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-bold text-gray-400">
+                      <span
+                        className="rounded-[var(--ds-radius-btn)] border px-3 py-2 text-[10px] font-medium"
+                        style={{
+                          background: "var(--c-peach)",
+                          borderColor: "var(--c-peach2)",
+                          color: "var(--c-muted)",
+                        }}
+                      >
                         Получено ✓
                       </span>
                     ) : (
@@ -178,13 +166,9 @@ export default function DailyScreen({
                         type="button"
                         disabled={!done}
                         onClick={() => onClaimDailyQuest(task.id)}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
-                          done
-                            ? "bg-green-500 text-white shadow-sm"
-                            : "cursor-not-allowed bg-gray-100 text-gray-400"
-                        }`}
+                        className={done ? "ds-btn-green" : "ds-btn-secondary ds-btn-disabled min-h-[36px] text-[10px]"}
                       >
-                        Забрать ✓
+                        Забрать
                       </button>
                     )}
                   </div>
@@ -194,34 +178,32 @@ export default function DailyScreen({
           </div>
         </section>
 
-        {/* Секция 3: еженедельная цель */}
         <section>
-          <h2 className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-gray-500">
+          <h2 className="mb-2 px-1 text-[11px] font-medium" style={{ color: "var(--c-muted)" }}>
             Еженедельная цель
           </h2>
-          <div className="rounded-2xl border border-gray-100 bg-white p-3 shadow-sm">
+          <div className="ds-card">
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-start gap-2">
                 <span className="text-xl" aria-hidden>
                   {WEEKLY_QUEST.icon}
                 </span>
                 <div>
-                  <div className="font-bold text-gray-900">
+                  <div className="text-[13px] font-medium" style={{ color: "var(--c-browndark)" }}>
                     {WEEKLY_QUEST.text}
                   </div>
-                  <div className="text-xs text-gray-500">
+                  <div className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
                     Награда: 🍪 {WEEKLY_QUEST.reward}
                   </div>
                 </div>
               </div>
-              <div className="text-xs font-bold text-gray-600">
-                {Math.min(quests.weeklyProgress, WEEKLY_QUEST.goal)} /{" "}
-                {WEEKLY_QUEST.goal}
+              <div className="text-[11px] font-medium tabular-nums" style={{ color: "var(--c-brown)" }}>
+                {Math.min(quests.weeklyProgress, WEEKLY_QUEST.goal)} / {WEEKLY_QUEST.goal}
               </div>
             </div>
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-100">
+            <div className="ds-progress mt-2 w-full">
               <div
-                className="h-full rounded-full bg-violet-500 transition-all"
+                className="ds-progress__fill ds-progress__fill--gold"
                 style={{
                   width: `${Math.min(100, (quests.weeklyProgress / WEEKLY_QUEST.goal) * 100)}%`,
                 }}
@@ -229,7 +211,14 @@ export default function DailyScreen({
             </div>
             <div className="mt-2 flex justify-end">
               {quests.weeklyClaimed ? (
-                <span className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-bold text-gray-400">
+                <span
+                  className="rounded-[var(--ds-radius-btn)] border px-3 py-2 text-[10px] font-medium"
+                  style={{
+                    background: "var(--c-peach)",
+                    borderColor: "var(--c-peach2)",
+                    color: "var(--c-muted)",
+                  }}
+                >
                   Получено ✓
                 </span>
               ) : (
@@ -237,13 +226,13 @@ export default function DailyScreen({
                   type="button"
                   disabled={quests.weeklyProgress < WEEKLY_QUEST.goal}
                   onClick={onClaimWeekly}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
+                  className={
                     quests.weeklyProgress >= WEEKLY_QUEST.goal
-                      ? "bg-green-500 text-white shadow-sm"
-                      : "cursor-not-allowed bg-gray-100 text-gray-400"
-                  }`}
+                      ? "ds-btn-green"
+                      : "ds-btn-secondary ds-btn-disabled min-h-[36px] text-[10px]"
+                  }
                 >
-                  Забрать ✓
+                  Забрать
                 </button>
               )}
             </div>

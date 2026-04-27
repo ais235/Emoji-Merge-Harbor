@@ -197,6 +197,36 @@ export interface ItemChain {
 export interface OrderRequirement {
   itemId: ItemId;
   count: number;
+  /** Опционально: минимальный уровень (для id с уровнем в цепочке совпадает с ALL_ITEMS). */
+  itemLevel?: number;
+}
+
+/** Пул эмодзи заказчиков — задаётся при создании заказа (`Order.customerEmoji`). */
+export const ORDER_CUSTOMER_EMOJIS = [
+  "👨",
+  "👩‍🍳",
+  "👮",
+  "🧑‍💼",
+  "👩‍🔬",
+  "🧑‍🎨",
+  "👨‍⚕️",
+  "🧑‍🏫",
+  "🧑‍⚕️",
+  "🧑‍🎓",
+  "🧑‍🌾",
+  "🧑‍🔧",
+  "🧑‍✈️",
+  "🧑‍🚒",
+] as const;
+
+/** Детерминированный заказчик по id заказа (для сохранений без поля customerEmoji). */
+export function customerEmojiForOrderId(orderId: string): string {
+  let h = 0;
+  for (let i = 0; i < orderId.length; i++) {
+    h = (Math.imul(31, h) + orderId.charCodeAt(i)) | 0;
+  }
+  const u = h >>> 0;
+  return ORDER_CUSTOMER_EMOJIS[u % ORDER_CUSTOMER_EMOJIS.length]!;
 }
 
 export interface Order {
@@ -208,6 +238,8 @@ export interface Order {
   delivered: Partial<Record<ItemId, number>>;
   rewardCoins: number;
   rewardXp: number;
+  /** Эмодзи заказчика на карточке заказа. */
+  customerEmoji?: string;
 }
 
 export function orderRemainingForItem(order: Order, itemId: ItemId): number {
@@ -221,17 +253,72 @@ export function orderIsFulfilled(order: Order): boolean {
   return order.requirements.every((r) => orderRemainingForItem(order, r.itemId) === 0);
 }
 
-/** Есть ли на поле предмет, который ещё можно сдать по этому заказу (только открытая `item`, не cobweb). */
-export function orderCanDeliverFromGrid(grid: GridCell[], order: Order): boolean {
-  for (const r of order.requirements) {
-    if (
-      orderRemainingForItem(order, r.itemId) > 0 &&
-      grid.some((c) => c.cellType === "item" && c.item === r.itemId)
-    ) {
-      return true;
-    }
+/** Сколько открытых клеток `item` с данным id на поле. */
+export function countOpenItemCellsForId(grid: GridCell[], itemId: ItemId): number {
+  let n = 0;
+  for (const c of grid) {
+    if (c.cellType === "item" && c.item === itemId) n += 1;
   }
-  return false;
+  return n;
+}
+
+/** Суммарный остаток по id по всем активным заказам. */
+export function unmetOrderDemandForItemId(orders: Order[], itemId: ItemId): number {
+  return orders.reduce((sum, o) => sum + orderRemainingForItem(o, itemId), 0);
+}
+
+/** Зелёная галочка на клетке: по всем заказам хватает открытых предметов этого id. */
+export function itemCellShowsOrderReadyCheck(orders: Order[], grid: GridCell[], cellItemId: ItemId): boolean {
+  const demand = unmetOrderDemandForItemId(orders, cellItemId);
+  if (demand <= 0) return false;
+  return countOpenItemCellsForId(grid, cellItemId) >= demand;
+}
+
+/** Слот заказа «на поле есть нужное количество» (или строка уже закрыта). */
+export function orderReqLineSatisfiedOnGrid(grid: GridCell[], order: Order, req: OrderRequirement): boolean {
+  const rem = orderRemainingForItem(order, req.itemId);
+  if (rem <= 0) return true;
+  return countOpenItemCellsForId(grid, req.itemId) >= rem;
+}
+
+/** Все незакрытые строки заказа можно снять с поля одним действием (только `item`, не cobweb). */
+export function orderAllRemainingSatisfiedFromGrid(grid: GridCell[], order: Order): boolean {
+  const seen = new Set<ItemId>();
+  for (const r of order.requirements) {
+    if (seen.has(r.itemId)) continue;
+    seen.add(r.itemId);
+    const rem = orderRemainingForItem(order, r.itemId);
+    if (rem <= 0) continue;
+    if (countOpenItemCellsForId(grid, r.itemId) < rem) return false;
+  }
+  return true;
+}
+
+/** Индексы клеток для полной сдачи заказа (порядок обхода слева направо). */
+export function collectIndicesForFullOrderDelivery(grid: GridCell[], order: Order): number[] {
+  const indices: number[] = [];
+  const used = new Set<number>();
+  const seen = new Set<ItemId>();
+  for (const r of order.requirements) {
+    if (seen.has(r.itemId)) continue;
+    seen.add(r.itemId);
+    let need = orderRemainingForItem(order, r.itemId);
+    for (let i = 0; i < grid.length && need > 0; i++) {
+      if (used.has(i)) continue;
+      if (grid[i].cellType === "item" && grid[i].item === r.itemId) {
+        indices.push(i);
+        used.add(i);
+        need -= 1;
+      }
+    }
+    if (need > 0) return [];
+  }
+  return indices;
+}
+
+/** Заказ можно выполнить одним нажатием «Отдать»: все незакрытые позиции закрыты открытыми `item` на поле. */
+export function orderCanDeliverFromGrid(grid: GridCell[], order: Order): boolean {
+  return orderAllRemainingSatisfiedFromGrid(grid, order);
 }
 
 /** Первая клетка с предметом для сдачи заказа (только `item`). */

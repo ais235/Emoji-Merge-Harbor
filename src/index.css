@@ -1,9 +1,83 @@
 @import "tailwindcss";
 
-/** iOS / мобильный: инерционный скролл + явный touch-action для горизонтальных/вертикальных полос */
+/* ─── Кафе Лены: палитра и токены ─── */
+:root {
+  --c-cream: #fdf6ed;
+  --c-peach: #f5e6d3;
+  --c-peach2: #edd5b8;
+  --c-rose: #e8a87c;
+  --c-rosedark: #c4774a;
+  --c-brown: #8b5e3c;
+  --c-browndark: #5c3d22;
+  --c-green: #7ab87a;
+  --c-greendark: #4a8a4a;
+  --c-gold: #e8b84b;
+  --c-golddark: #b8860d;
+  --c-blue: #7ab3d4;
+  --c-bluedark: #3a7fa0;
+  --c-muted: #c4a882;
+  --c-fog: #d4b896;
+  --c-foglight: #e8d5b8;
+  --ds-radius-cell: 5px;
+  --ds-radius-btn: 10px;
+  --ds-radius-btn-lg: 12px;
+  --ds-radius-card: 12px;
+  --ds-tap-ms: 150ms;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--c-browndark);
+  background: var(--c-cream);
+}
+
+/** iOS / мобильный: инерционный скролл + явный touch-action */
 .scroll-touch-x {
   -webkit-overflow-scrolling: touch;
   touch-action: pan-x;
+}
+
+/** Горизонтальный ряд заказов: скролл без видимого скроллбара */
+.orders-scroll-hide {
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.orders-scroll-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/** Ряд заказов: gap-1.5 (0.375rem) — две щели между тремя карточками = 0.75rem. */
+.orders-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  gap: 0.375rem;
+}
+
+/**
+ * Ширина одной карточки всегда как при трёх в ряду (1–2 заказа не растягиваются на всю ширину).
+ * 100% — ширина контента .orders-row (без padding родителя).
+ */
+.order-card-slot {
+  flex: 0 0 calc((100% - 0.75rem) / 3);
+  max-width: calc((100% - 0.75rem) / 3);
+  min-width: 0;
+}
+
+/** Карточка заказа: эмодзи портрета и предметов на подносе масштабируются с шириной экрана (3 карточки в ряд). */
+.order-card-portrait-emoji {
+  font-size: clamp(2.35rem, calc((100vw - 2.5rem) / 4.35), 3.5rem);
+}
+.order-card-tray-emoji {
+  font-size: clamp(1.05rem, calc((100vw - 2.5rem) / 11), 1.5rem);
 }
 
 .scroll-touch-y {
@@ -11,7 +85,6 @@
   touch-action: pan-y;
 }
 
-/** Горизонтальная полоса заказов: свайп/скролл без видимой полосы прокрутки */
 .orders-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -21,4 +94,475 @@
 }
 .orders-scroll::-webkit-scrollbar {
   display: none;
+}
+
+/* ─── Оболочка экрана (~390px) ─── */
+.ds-screen {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 390px;
+  width: 100%;
+  min-height: 100dvh;
+  background: var(--c-cream);
+  user-select: none;
+}
+
+/* ─── Топбар ─── */
+.ds-topbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 10px;
+  background: var(--c-peach);
+  border-bottom: 1px solid var(--c-peach2);
+}
+
+.ds-topbar-title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--c-browndark);
+  line-height: 1.25;
+}
+
+.ds-topbar-spacer {
+  width: 44px;
+  flex-shrink: 0;
+}
+
+/* ← Дом: pill с иконкой */
+.ds-pill-home {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--c-peach2);
+  border-radius: 999px;
+  background: var(--c-cream);
+  color: var(--c-browndark);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  transition: transform var(--ds-tap-ms) ease-out;
+}
+.ds-pill-home:active {
+  transform: scale(0.97);
+}
+
+/* Статы в топбаре */
+.ds-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 9px;
+  border: 1px solid var(--c-peach2);
+  border-radius: 999px;
+  background: var(--c-cream);
+  color: var(--c-browndark);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.ds-regen-hint {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--c-bluedark);
+  line-height: 1.2;
+}
+
+/* ─── Кнопки ─── */
+.ds-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  border-radius: var(--ds-radius-btn-lg);
+  padding: 13px 16px;
+  min-height: 44px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--c-rosedark);
+  cursor: pointer;
+  transition: transform var(--ds-tap-ms) ease-out, opacity var(--ds-tap-ms) ease-out;
+}
+.ds-btn-primary:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.ds-btn-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ds-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--c-peach2);
+  border-radius: var(--ds-radius-btn);
+  padding: 10px 14px;
+  min-height: 44px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-browndark);
+  background: var(--c-peach);
+  cursor: pointer;
+  transition: transform var(--ds-tap-ms) ease-out;
+}
+.ds-btn-secondary:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.ds-btn-disabled {
+  background: var(--c-foglight);
+  color: var(--c-muted);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ds-btn-green {
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 32px;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--c-green);
+  cursor: pointer;
+  transition: transform var(--ds-tap-ms) ease-out;
+}
+.ds-btn-green:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.ds-btn-green:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--c-foglight);
+  color: var(--c-muted);
+}
+
+/* ─── Карточки ─── */
+.ds-card {
+  border-radius: var(--ds-radius-card);
+  border: 1px solid var(--c-peach2);
+  background: var(--c-cream);
+  padding: 10px 12px;
+}
+
+.ds-card-peach {
+  border-radius: var(--ds-radius-card);
+  border: 1px solid var(--c-peach2);
+  background: var(--c-peach);
+  padding: 10px 12px;
+}
+
+.ds-card-active-blue {
+  border: 1.5px solid var(--c-blue);
+}
+
+.ds-card-active-green {
+  border: 1.5px solid var(--c-green);
+}
+
+/* ─── Прогресс-бар 3px ─── */
+.ds-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--c-peach2);
+  overflow: hidden;
+}
+.ds-progress__fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.2s ease-out;
+}
+.ds-progress__fill--green {
+  background: var(--c-green);
+}
+.ds-progress__fill--rose {
+  background: var(--c-rose);
+}
+.ds-progress__fill--blue {
+  background: var(--c-blue);
+}
+.ds-progress__fill--gold {
+  background: var(--c-gold);
+}
+
+/* ─── Бейджи ─── */
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  border-radius: 20px;
+  font-size: 8px;
+  font-weight: 500;
+  background: var(--c-green);
+  color: #fff;
+}
+.ds-badge--warn {
+  background: var(--c-fog);
+  color: var(--c-brown);
+}
+
+/* ─── Хаб: три утилиты ─── */
+.ds-hub-util-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.ds-hub-util-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 8px 4px;
+  border: 1px solid var(--c-peach2);
+  border-radius: var(--ds-radius-btn);
+  background: var(--c-peach);
+  color: var(--c-browndark);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.15;
+  text-align: center;
+  cursor: pointer;
+  transition: transform var(--ds-tap-ms) ease-out;
+}
+.ds-hub-util-btn:active {
+  transform: scale(0.97);
+}
+
+/* ─── Игровая сетка (классы из GameScreen) ─── */
+.game-grid-cell {
+  border-radius: var(--ds-radius-cell);
+  box-sizing: border-box;
+}
+
+.cell-box {
+  background: var(--c-fog);
+  border: 1px solid var(--c-peach2);
+}
+
+.cell-hint-box {
+  background: var(--c-foglight);
+  border: 1px solid var(--c-peach2);
+}
+
+.cell-cobweb {
+  background: var(--c-peach);
+  border: 1px solid var(--c-peach2);
+}
+
+.cell-lock {
+  background: var(--c-foglight);
+  border: 1px solid var(--c-peach2);
+  color: var(--c-muted);
+}
+
+.ds-cell-open {
+  background: var(--c-cream);
+  border: 1px solid var(--c-peach2);
+}
+.ds-cell-open:hover {
+  filter: brightness(1.02);
+}
+
+.cell-is-generator {
+  background: var(--c-cream);
+  border: 1.5px solid var(--c-blue);
+}
+.cell-is-generator:hover {
+  filter: brightness(1.02);
+}
+
+.cell-generator-depleted {
+  opacity: 0.62;
+}
+
+.cell-resource-coins {
+  background: var(--c-peach);
+  border: 1px solid var(--c-peach2);
+}
+
+.cell-resource-energy {
+  background: var(--c-cream);
+  border: 1px solid var(--c-blue);
+}
+
+.cell-selected {
+  background: #edf7ed;
+  border: 1.5px solid var(--c-green);
+}
+
+@keyframes ds-merge-pop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.5;
+  }
+  55% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.cell-merge-pop {
+  animation: ds-merge-pop 0.2s ease-out forwards;
+}
+
+@keyframes ds-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+.cell-shake {
+  animation: ds-shake 0.3s ease-in-out;
+}
+
+@keyframes ds-cell-unlock {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  40% {
+    opacity: 0.88;
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.cell-unlocked {
+  animation: ds-cell-unlock 0.3s ease-out forwards;
+}
+
+@keyframes ds-cell-unlock-strong {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  35% {
+    opacity: 0.82;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.cell-unlocked-strong {
+  animation: ds-cell-unlock-strong 0.55s ease-out forwards;
+}
+
+@keyframes ds-coin-fly {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-52px) scale(0.85);
+    opacity: 0;
+  }
+}
+.coin-fly {
+  animation: ds-coin-fly 0.75s ease-out forwards;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--c-golddark);
+}
+
+@keyframes ds-order-bonus-toast {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.order-bonus-toast {
+  animation: ds-order-bonus-toast 1.5s ease forwards;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.screen-entering {
+  animation: screen-in 0.18s ease-out;
+}
+
+@keyframes levelup-flash {
+  0% {
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes levelup-flash {
+  0% {
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.levelup-flash-overlay {
+  background: var(--c-gold);
+  animation: levelup-flash 0.48s ease-out forwards;
 }

@@ -17,7 +17,10 @@ import {
   type ItemChain,
   chainsFromGridGenerators,
   orderIsFulfilled,
-  findFirstCellIndexForOrderDelivery,
+  orderAllRemainingSatisfiedFromGrid,
+  collectIndicesForFullOrderDelivery,
+  ORDER_CUSTOMER_EMOJIS,
+  customerEmojiForOrderId,
   ProgressionState,
   type AppScreen,
   type ActiveZone,
@@ -140,6 +143,20 @@ function hubUnlockedZonesForUi(devMode: boolean, prog: ProgressionState): string
 const DEV_RESET_ENERGY = 999;
 
 const STORAGE_KEY = "emoji_merge_harbor_state_v2"; // Changed key to avoid old state issues
+const LAST_SAVE_AT_KEY = "emoji_merge_harbor_last_save_ts";
+
+function readSaveAgeMinutes(): number | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const t = localStorage.getItem(LAST_SAVE_AT_KEY);
+    if (!t) return null;
+    const n = Number(t);
+    if (Number.isNaN(n)) return null;
+    return Math.floor((Date.now() - n) / 60000);
+  } catch {
+    return null;
+  }
+}
 
 function createNormalEmptyGridCell(): GridCell {
   return emptyGridCell();
@@ -268,9 +285,10 @@ function buildRandomSessionOrder(
 
   const tierMin = playerTierMinOrderItemLevel(level);
   const tierMaxCap = playerTierMaxOrderItemLevel(level);
+  /** На 1 уровень выше максимума «видел на поле» — стимул к слияниям; не выше потолка по уровню игрока. */
   const orderMaxLevel = Math.min(Math.max(1, maxSeenItemLevel) + 1, tierMaxCap);
-  const orderMinLevel = Math.min(tierMin, orderMaxLevel);
-  const allowedMinLevel = Math.max(1, orderMinLevel);
+  const orderMinLevel = playerTierMinOrderItemLevel(level);
+  const allowedMinLevel = Math.max(1, Math.min(orderMinLevel, orderMaxLevel));
   const allowedMaxLevel = Math.max(allowedMinLevel, orderMaxLevel);
 
   const spawnChainIds = new Set(chainsBase.map((c) => c.id));
@@ -331,9 +349,22 @@ function buildRandomSessionOrder(
   }
   if (requirements.length === 0) {
     const ch = chainsBase[0]!;
-    const pool = mergeableItemsInChain(ch).filter((x) => x.level >= 1 && x.level <= allowedMaxLevel);
+    const mergeables = mergeableItemsInChain(ch);
+    const poolStrict = mergeables.filter((x) => x.level >= allowedMinLevel && x.level <= allowedMaxLevel);
+    const pool =
+      poolStrict.length > 0
+        ? poolStrict
+        : mergeables.filter((x) => x.level <= allowedMaxLevel);
     const pick =
-      pool.find((x) => x.level >= allowedMinLevel) ?? pool[pool.length - 1] ?? mergeableItemsInChain(ch)[0];
+      pool.find((x) => x.level >= allowedMinLevel) ?? pool[pool.length - 1] ?? mergeables[0];
+    if (pick) requirements.push({ itemId: pick.id, count: 1 });
+  }
+  if (requirements.length === 0) {
+    const mergeables = mergeableItemsInChain(ITEM_CHAINS.fruit);
+    const pick =
+      mergeables.find((x) => x.level >= allowedMinLevel && x.level <= allowedMaxLevel) ??
+      mergeables.filter((x) => x.level <= allowedMaxLevel).at(-1) ??
+      mergeables[0];
     if (pick) requirements.push({ itemId: pick.id, count: 1 });
   }
   if (requirements.length === 0) {
@@ -352,6 +383,8 @@ function buildRandomSessionOrder(
   const mult = 1 + 0.25 * (totalUnits - 1) + 0.1 * (requirements.length - 1);
   const rewardCoins = Math.round(base.coins * mult);
   const rewardXp = Math.round(base.xp * mult);
+  const customerEmoji =
+    ORDER_CUSTOMER_EMOJIS[Math.floor(Math.random() * ORDER_CUSTOMER_EMOJIS.length)]!;
 
   return {
     id: orderId,
@@ -360,17 +393,37 @@ function buildRandomSessionOrder(
     delivered: {},
     rewardCoins,
     rewardXp,
+    customerEmoji,
   };
 }
 
-function orderPrimaryItemId(o: Order): string | null {
-  return o.requirements[0]?.itemId ?? null;
+/** Сигнатура слота заказа: конкретный предмет уровня (id уже задаёт уровень в цепочке). */
+function orderRequirementKey(itemId: string): string | null {
+  const d = ALL_ITEMS[itemId];
+  if (!d || !("level" in d) || itemIsGenerator(d) || itemIsResourcePickup(d)) return null;
+  return `${itemId}:${d.level}`;
 }
 
+function orderRequirementKeySet(order: Order): Set<string> {
+  const keys = new Set<string>();
+  for (const r of order.requirements) {
+    const k = orderRequirementKey(r.itemId);
+    if (k) keys.add(k);
+  }
+  return keys;
+}
+
+/** Активные заказы не должны дублировать один и тот же предмет (тот же id = тот же уровень в merge-цепочке). */
 function orderConflictsWithExisting(candidate: Order, existing: Order[]): boolean {
-  const sig = orderPrimaryItemId(candidate);
-  if (!sig) return false;
-  return existing.some((o) => orderPrimaryItemId(o) === sig);
+  const cKeys = orderRequirementKeySet(candidate);
+  if (cKeys.size === 0) return false;
+  return existing.some((o) => {
+    const oKeys = orderRequirementKeySet(o);
+    for (const k of cKeys) {
+      if (oKeys.has(k)) return true;
+    }
+    return false;
+  });
 }
 
 function buildUniqueRandomOrder(
@@ -383,7 +436,7 @@ function buildUniqueRandomOrder(
 ): Order {
   let attempts = 0;
   let order = buildRandomSessionOrder(level, maxSeenItemLevel, grid, zone, orderId);
-  while (attempts < 10 && orderConflictsWithExisting(order, existing)) {
+  while (attempts < 22 && orderConflictsWithExisting(order, existing)) {
     attempts += 1;
     order = buildRandomSessionOrder(level, maxSeenItemLevel, grid, zone, `${orderId}_u${attempts}`);
   }
@@ -450,7 +503,9 @@ function normalizeOneOrder(o: unknown): Order | null {
         const itemId = typeof q.itemId === "string" ? q.itemId : null;
         const count = typeof q.count === "number" && q.count >= 1 ? Math.floor(q.count) : null;
         if (!itemId || !count) return null;
-        return { itemId, count };
+        const itemLevel =
+          typeof q.itemLevel === "number" && q.itemLevel >= 1 ? Math.floor(q.itemLevel) : undefined;
+        return itemLevel !== undefined ? { itemId, count, itemLevel } : { itemId, count };
       })
       .filter((x): x is OrderRequirement => x !== null);
     if (requirements.length === 0) return null;
@@ -487,7 +542,19 @@ function normalizeOneOrder(o: unknown): Order | null {
   const instanceId =
     typeof r.instanceId === "string" && r.instanceId.length > 0 ? r.instanceId : crypto.randomUUID();
 
-  return { id, instanceId, requirements, delivered, rewardCoins, rewardXp };
+  const customerEmojiRaw =
+    typeof r.customerEmoji === "string" && r.customerEmoji.length > 0 ? r.customerEmoji : null;
+  const customerEmoji = customerEmojiRaw ?? customerEmojiForOrderId(id);
+
+  return {
+    id,
+    instanceId,
+    requirements,
+    delivered,
+    rewardCoins,
+    rewardXp,
+    customerEmoji,
+  };
 }
 
 function hydrateGameStateFromStorage(
@@ -828,6 +895,13 @@ export default function App() {
             baseProg
           )!;
           setSaveLoadedFromDisk(true);
+          try {
+            if (!localStorage.getItem(LAST_SAVE_AT_KEY)) {
+              localStorage.setItem(LAST_SAVE_AT_KEY, String(Date.now()));
+            }
+          } catch {
+            /* ignore */
+          }
           const { nextProg, energyFromChainRewards } = hydrateCollectionFromGrid(
             hydrated.grid,
             baseProg
@@ -862,10 +936,9 @@ export default function App() {
   useEffect(() => {
     if (state && progState) {
       try {
-        localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify({ gameState: state, progState, ordersCompleted })
-        );
+        const payload = JSON.stringify({ gameState: state, progState, ordersCompleted });
+        localStorage.setItem(STORAGE_KEY, payload);
+        localStorage.setItem(LAST_SAVE_AT_KEY, String(Date.now()));
       } catch (e) {
         console.error("Failed to save state:", e);
       }
@@ -1189,9 +1262,7 @@ export default function App() {
       orderCoinDoubled: boolean;
       anyLevelUp: boolean;
     };
-    let partialSound = false;
     let fulfilledMeta: FulfilledMeta | null = null;
-    let bumpGrid: GridCell[] | null = null;
     let orderFieldOpen: MergeFieldProgressResult | null = null;
 
     flushSync(() => {
@@ -1205,31 +1276,26 @@ export default function App() {
         const order = prev.orders[orderIndex];
         if (!order || order.id !== orderId || orderIsFulfilled(order)) return prev;
 
-        const itemIndex = findFirstCellIndexForOrderDelivery(prev.grid, order);
-        if (itemIndex === -1) return prev;
+        if (!orderAllRemainingSatisfiedFromGrid(prev.grid, order)) return prev;
 
-        const itemId = prev.grid[itemIndex].item!;
+        const clearIdx = collectIndicesForFullOrderDelivery(prev.grid, order);
+        if (clearIdx.length === 0) return prev;
+
         const newGrid = [...prev.grid];
-        newGrid[itemIndex] = emptyGridCell();
+        for (const i of clearIdx) newGrid[i] = emptyGridCell();
         const gridAfterPickup = newGrid;
 
-        const prevDelivered = order.delivered[itemId] ?? 0;
-        const updatedOrder: Order = {
-          ...order,
-          delivered: { ...order.delivered, [itemId]: prevDelivered + 1 },
-        };
-
-        if (!orderIsFulfilled(updatedOrder)) {
-          partialSound = true;
-          bumpGrid = gridAfterPickup;
-          return {
-            ...prev,
-            grid: gridAfterPickup,
-            orders: prev.orders.map((o, i) => (i === orderIndex ? updatedOrder : o)),
-          };
+        const requiredById = new Map<string, number>();
+        for (const r of order.requirements) {
+          requiredById.set(r.itemId, (requiredById.get(r.itemId) ?? 0) + r.count);
         }
+        const deliveredComplete: Partial<Record<string, number>> = {};
+        for (const [id, c] of requiredById) {
+          deliveredComplete[id] = c;
+        }
+        const finalized: Order = { ...order, delivered: deliveredComplete };
+        if (!orderIsFulfilled(finalized)) return prev;
 
-        bumpGrid = gridAfterPickup;
         const newOrders = prev.orders.filter((_, i) => i !== orderIndex);
         let afterCountProg = incrementMinigameOrderComplete(prog, prev.playZone);
         const maxSeenForOrder = bumpMaxSeenItemLevelFromGrid(afterCountProg, gridAfterPickup).maxSeenItemLevel;
@@ -1303,14 +1369,6 @@ export default function App() {
         };
       });
     });
-
-    if (partialSound) {
-      sounds.select();
-      if (bumpGrid) {
-        setProgState((p) => (p ? bumpMaxSeenItemLevelFromGrid(p, bumpGrid) : p));
-      }
-      return;
-    }
 
     if (!fulfilledMeta) return;
 
@@ -1612,15 +1670,24 @@ export default function App() {
 
   if (!state || !progState) {
     return (
-      <div className="h-[100dvh] w-full flex flex-col items-center justify-center bg-[#F8F9FA] p-4 text-center">
-        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <h1 className="text-xl font-bold text-gray-800 mb-2">Загрузка игры...</h1>
-        <p className="text-sm text-gray-500 mb-4">Если игра не загружается, попробуйте сбросить данные.</p>
-        <button 
+      <div
+        className="flex h-[100dvh] w-full flex-col items-center justify-center p-4 text-center"
+        style={{ background: "var(--c-cream)", color: "var(--c-browndark)" }}
+      >
+        <div
+          className="mb-4 h-12 w-12 animate-spin rounded-full border-4 border-t-transparent"
+          style={{ borderColor: "var(--c-peach2)", borderTopColor: "var(--c-rosedark)" }}
+        />
+        <h1 className="mb-2 text-[15px] font-medium">Загрузка игры…</h1>
+        <p className="mb-4 max-w-xs text-[12px] font-medium" style={{ color: "var(--c-brown)" }}>
+          Если игра не загружается, попробуйте сбросить данные.
+        </p>
+        <button
+          type="button"
           onClick={resetGame}
-          className="px-4 py-2 bg-red-500 text-white rounded-lg font-bold text-sm shadow-md"
+          className="ds-btn-secondary w-auto min-w-[200px] border-[var(--c-rose)] text-[var(--c-rosedark)]"
         >
-          СБРОСИТЬ ДАННЫЕ
+          Сбросить данные
         </button>
       </div>
     );
@@ -1654,6 +1721,13 @@ export default function App() {
             onOpenSettings={() => setSettingsOpen(true)}
             devMode={devMode}
             onFullReset={handleFullReset}
+            saveAgeMinutes={readSaveAgeMinutes()}
+            playerLevel={progState.level}
+            currentRoomName={
+              HUB_ZONES.find((z) => z.id === state.playZone)?.displayName ?? "Зал"
+            }
+            energy={state.energy}
+            maxEnergy={state.maxEnergy}
           />
           <SettingsModal
             open={settingsOpen}
@@ -1678,6 +1752,7 @@ export default function App() {
             xpProgressPercent={progress}
             unlockedZones={hubUnlockedZones}
             purchasedUpgrades={progState.purchasedUpgrades}
+            currentPlayZone={state.playZone}
             repairNudgeZone={hubHighlightZone}
             hubOrdersToast={hubOrdersBackToast}
             pulsePlayButton={hubPulsePlayButton}
@@ -1790,6 +1865,9 @@ export default function App() {
           onNoMovesExitHome={handleNoMovesExitHome}
           onWatchAdEnergy={handleWatchAdEnergy}
           onBuyEnergyForCoins={handleBuyEnergyForCoins}
+          roomDisplayName={
+            HUB_ZONES.find((z) => z.id === state.playZone)?.displayName ?? "Комната"
+          }
         />
         </div>
       )}
@@ -1820,36 +1898,59 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(92,61,34,0.45)] p-4"
           >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="bg-white rounded-[2rem] p-6 max-w-xs w-full text-center shadow-2xl"
+            <motion.div
+              initial={{ scale: 0.96, y: 12, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              className="ds-card w-full max-w-xs p-6 text-center"
             >
-              <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <Play className="w-8 h-8 text-blue-500 fill-blue-500" />
-              </div>
-              <h2 className="text-xl font-black text-gray-900 mb-3 uppercase tracking-tight">Как играть</h2>
-              <div className="space-y-3 text-gray-600 text-xs mb-6 text-left">
-                <div className="flex gap-2">
-                  <div className="w-5 h-5 bg-blue-500 text-white rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold">1</div>
-                  <p>Нажми на <b>корзину 🧺</b> — рядом появится предмет 1 уровня, пока на клетке есть заряды.</p>
-                </div>
-                <div className="flex gap-2">
-                  <div className="w-5 h-5 bg-blue-500 text-white rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold">2</div>
-                  <p>Объединяй <b>одинаковые</b> предметы, чтобы получить новый уровень!</p>
-                </div>
-                <div className="flex gap-2">
-                  <div className="w-5 h-5 bg-blue-500 text-white rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold">3</div>
-                  <p>Выполняй <b>Заказы</b> сверху, чтобы получать Монеты и Опыт.</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowTutorial(false)}
-                className="w-full py-3 bg-blue-500 text-white rounded-xl font-bold text-base shadow-lg shadow-blue-100 hover:bg-blue-600 transition-colors"
+              <div
+                className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-[14px] border"
+                style={{ background: "var(--c-peach)", borderColor: "var(--c-peach2)" }}
               >
-                ПОНЯТНО!
+                <Play className="h-7 w-7" style={{ color: "var(--c-bluedark)" }} fill="var(--c-blue)" />
+              </div>
+              <h2 className="mb-3 text-[15px] font-medium" style={{ color: "var(--c-browndark)" }}>
+                Как играть
+              </h2>
+              <div className="mb-6 space-y-3 text-left text-[11px] font-medium" style={{ color: "var(--c-brown)" }}>
+                <div className="flex gap-2">
+                  <div
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-medium text-white"
+                    style={{ background: "var(--c-bluedark)" }}
+                  >
+                    1
+                  </div>
+                  <p>
+                    Нажми на <b>корзину 🧺</b> — рядом появится предмет 1 уровня, пока на клетке есть заряды.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <div
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-medium text-white"
+                    style={{ background: "var(--c-bluedark)" }}
+                  >
+                    2
+                  </div>
+                  <p>
+                    Объединяй <b>одинаковые</b> предметы, чтобы получить новый уровень!
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <div
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-medium text-white"
+                    style={{ background: "var(--c-bluedark)" }}
+                  >
+                    3
+                  </div>
+                  <p>
+                    Выполняй <b>Заказы</b> сверху, чтобы получать монеты и опыт.
+                  </p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowTutorial(false)} className="ds-btn-primary w-full">
+                Понятно
               </button>
             </motion.div>
           </motion.div>
@@ -1872,48 +1973,21 @@ export default function App() {
             exit={{ opacity: 0, scale: 1.5 }}
             className="fixed inset-0 z-[60] flex items-center justify-center pointer-events-none"
           >
-            <div className="bg-yellow-400 text-yellow-900 px-8 py-4 rounded-full font-black text-2xl shadow-2xl border-4 border-white flex flex-col items-center">
-              <Star className="w-8 h-8 mb-1 fill-current" />
-              НОВЫЙ УРОВЕНЬ!
+            <div
+              className="flex flex-col items-center rounded-[20px] border px-6 py-3 text-[18px] font-medium"
+              style={{
+                background: "var(--c-gold)",
+                borderColor: "var(--c-golddark)",
+                color: "var(--c-browndark)",
+              }}
+            >
+              <Star className="mb-1 h-7 w-7 fill-current" />
+              Новый уровень!
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      <style>{`
-        .no-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-        .no-scrollbar {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-        @keyframes screen-in {
-          from { opacity: 0; transform: translateY(12px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .screen-entering {
-          animation: screen-in 0.2s ease-out;
-        }
-        @keyframes levelup-flash {
-          0% { opacity: 0; }
-          30% { opacity: 1; }
-          100% { opacity: 0; }
-        }
-        .levelup-flash-overlay {
-          background: rgba(255, 215, 0, 0.3);
-          animation: levelup-flash 0.5s ease-out forwards;
-        }
-        @keyframes order-bonus-toast-fade {
-          0% { opacity: 0; }
-          18% { opacity: 1; }
-          82% { opacity: 1; }
-          100% { opacity: 0; }
-        }
-        .order-bonus-toast {
-          animation: order-bonus-toast-fade 1.5s ease forwards;
-        }
-      `}</style>
     </>
   );
 }

@@ -18,8 +18,9 @@ export interface CafeHubScreenProps {
   coins: number;
   xpProgressPercent: number;
   unlockedZones: string[];
-  /** Купленные id апгрейдов (для дроби предметов в комнате на карточке). */
   purchasedUpgrades: string[];
+  /** Текущая комната миниигры — подсветка карточки. */
+  currentPlayZone: ActiveZone;
   onNavigateRoom: (zone: ActiveZone) => void;
   dailyQuestCompleted: number;
   dailyQuestTotal: number;
@@ -30,11 +31,8 @@ export interface CafeHubScreenProps {
   reconstruction: ReconstructionState;
   onBackToMenu: () => void;
   onPlay: () => void;
-  /** Подсказка после исчерпания заказов в миниигре — какую комнату чинить. */
   repairNudgeZone?: ActiveZone | null;
-  /** Тост после ремонта: задания снова доступны. */
   hubOrdersToast?: string | null;
-  /** Пульс кнопки «Играть» после сброса лимита заказов. */
   pulsePlayButton?: boolean;
 }
 
@@ -46,6 +44,7 @@ export default function CafeHubScreen({
   xpProgressPercent,
   unlockedZones,
   purchasedUpgrades,
+  currentPlayZone,
   onNavigateRoom,
   dailyQuestCompleted,
   dailyQuestTotal,
@@ -66,181 +65,168 @@ export default function CafeHubScreen({
       : "";
 
   return (
-    <div className="mx-auto flex h-[100dvh] w-full max-w-[400px] flex-col overflow-hidden bg-[#E8EDF2] font-sans select-none">
-      <header className="flex flex-shrink-0 items-center gap-2 border-b border-gray-200/90 bg-white px-3 py-2 shadow-sm">
-        <button
-          type="button"
-          onClick={onBackToMenu}
-          className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-bold text-blue-600 active:bg-gray-50"
-        >
+    <div className="ds-screen flex flex-col overflow-hidden">
+      <header className="ds-topbar">
+        <button type="button" onClick={onBackToMenu} className="ds-pill-home shrink-0">
           ← Меню
         </button>
-        <div className="min-w-0 flex-1 text-center">
-          <h1 className="truncate text-sm font-black text-gray-900">Дом</h1>
-        </div>
+        <h1 className="ds-topbar-title">Дом</h1>
         <motion.button
           type="button"
-          whileTap={{ scale: 0.98 }}
+          whileTap={{ scale: 0.97 }}
           onClick={onPlay}
           animate={
             pulsePlayButton
-              ? { scale: [1, 1.06, 1], boxShadow: ["0 1px 2px rgb(0 0 0 / 0.05)", "0 0 0 4px rgb(250 204 21 / 0.5)", "0 1px 2px rgb(0 0 0 / 0.05)"] }
+              ? { scale: [1, 1.04, 1] }
               : false
           }
           transition={pulsePlayButton ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" } : undefined}
-          className="flex-shrink-0 rounded-lg bg-blue-500 px-3 py-1.5 text-xs font-black uppercase text-white shadow-sm active:bg-blue-600"
+          className="ds-btn-primary shrink-0 px-3 py-2 text-[11px]"
         >
           Играть
         </motion.button>
       </header>
 
       <div className="no-scrollbar scroll-touch-y min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 pb-0">
-        <div className="mb-2 rounded-xl border border-gray-100 bg-white p-2 shadow-sm">
+        <div className="ds-card-peach mb-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5">
-              <Zap className="h-3 w-3 fill-blue-500 text-blue-500" />
-              <span className="text-[10px] font-bold text-blue-700">
+            <div className="ds-stat-pill shrink-0">
+              <Zap className="h-3 w-3 shrink-0" style={{ color: "var(--c-bluedark)" }} aria-hidden />
+              <span className="tabular-nums">
                 {energy}/{maxEnergy}
               </span>
             </div>
-            <div className="flex min-w-0 flex-1 flex-col items-center px-2">
+            <div className="flex min-w-0 flex-1 flex-col items-center px-1">
               <div className="mb-0.5 flex items-center gap-0.5">
-                <Star className="h-2.5 w-2.5 fill-yellow-500 text-yellow-500" />
-                <span className="text-[8px] font-bold uppercase text-gray-500">Ур. {level}</span>
+                <Star className="h-2.5 w-2.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+                <span className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
+                  Уровень {level}
+                </span>
               </div>
-              <div className="h-1 w-full overflow-hidden rounded-full bg-gray-100">
+              <div className="ds-progress w-full max-w-[140px]">
                 <div
-                  className="h-full max-w-full bg-yellow-400 transition-all"
+                  className="ds-progress__fill ds-progress__fill--gold"
                   style={{ width: `${Math.min(xpProgressPercent, 100)}%` }}
                 />
               </div>
             </div>
-            <div className="flex items-center gap-1 rounded-full border border-yellow-100 bg-yellow-50 px-2 py-0.5">
-              <Coins className="h-3 w-3 fill-yellow-600 text-yellow-600" />
-              <span className="text-[10px] font-bold text-yellow-700">{coins}</span>
+            <div className="ds-stat-pill shrink-0">
+              <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+              <span className="tabular-nums">{coins}</span>
             </div>
           </div>
         </div>
 
         <ReconstructionPanel reconstruction={reconstruction} />
 
-        <button
-          type="button"
-          onClick={onOpenDaily}
-          className="relative mb-2 mt-1 w-full rounded-xl border border-gray-100 bg-white p-2.5 text-left shadow-sm active:bg-gray-50"
-        >
-          {dailyUnclaimedCount > 0 ? (
-            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
-              {dailyUnclaimedCount}
+        <div className="ds-hub-util-grid mb-3">
+          <button type="button" onClick={onOpenDaily} className="relative ds-hub-util-btn">
+            {dailyUnclaimedCount > 0 ? (
+              <span className="ds-badge absolute -right-0.5 -top-0.5 z-[1] min-w-[16px] px-1">{dailyUnclaimedCount}</span>
+            ) : null}
+            <span className="text-lg leading-none" aria-hidden>
+              📋
             </span>
-          ) : null}
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="text-xl" aria-hidden>
-                📋
-              </span>
-              <div>
-                <div className="text-xs font-bold text-gray-900">Ежедневные задания</div>
-                <div className="text-[10px] text-gray-500">
-                  {dailyQuestCompleted} / {dailyQuestTotal}
-                </div>
-              </div>
-            </div>
-            <span className="text-gray-400">→</span>
-          </div>
-        </button>
-
-        {onOpenCoinShop ? (
+            <span>Задания</span>
+          </button>
           <button
             type="button"
-            onClick={onOpenCoinShop}
-            className="mb-2 w-full rounded-xl border border-gray-100 bg-white p-2.5 text-left shadow-sm active:bg-gray-50"
+            disabled={!onOpenCoinShop}
+            onClick={() => onOpenCoinShop?.()}
+            className={`ds-hub-util-btn ${!onOpenCoinShop ? "cursor-not-allowed opacity-50" : ""}`}
           >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="text-xl" aria-hidden>
-                  🛠️
-                </span>
-                <div>
-                  <div className="text-xs font-bold text-gray-900">Улучшения игры</div>
-                  <div className="text-[10px] text-gray-500">Магазин за монеты</div>
-                </div>
-              </div>
-              <span className="text-gray-400">→</span>
-            </div>
+            <span className="text-lg leading-none" aria-hidden>
+              🛠️
+            </span>
+            <span>Улучшения</span>
           </button>
-        ) : null}
-
-        {onOpenCollection ? (
           <button
             type="button"
-            onClick={onOpenCollection}
-            className="mb-2 w-full rounded-xl border border-gray-100 bg-white p-2.5 text-left shadow-sm active:bg-gray-50"
+            disabled={!onOpenCollection}
+            onClick={() => onOpenCollection?.()}
+            className={`ds-hub-util-btn ${!onOpenCollection ? "cursor-not-allowed opacity-50" : ""}`}
           >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="text-xl" aria-hidden>
-                  📚
-                </span>
-                <div>
-                  <div className="text-xs font-bold text-gray-900">Коллекция</div>
-                  <div className="text-[10px] text-gray-500">Предметы и награды</div>
-                </div>
-              </div>
-              <span className="text-gray-400">→</span>
-            </div>
+            <span className="text-lg leading-none" aria-hidden>
+              📚
+            </span>
+            <span>Коллекция</span>
           </button>
-        ) : null}
+        </div>
 
-        <p className="mb-1 text-center text-[10px] text-gray-400">Комнаты</p>
-        <div className="space-y-1.5 pb-[env(safe-area-inset-bottom,12px)]">
+        <p className="mb-1.5 text-center text-[10px] font-medium" style={{ color: "var(--c-muted)" }}>
+          Комнаты
+        </p>
+        <div className="space-y-2 pb-[env(safe-area-inset-bottom,12px)]">
           {HUB_ZONES.map((zone) => {
             const key = progressZoneId(zone.id);
             const isOpen = unlockedZones.includes(key);
             const isRepairNudge = repairNudgeZone != null && zone.id === repairNudgeZone;
+            const isCurrent = zone.id === currentPlayZone;
             const { bought: furnBought, total: furnTotal } = roomFurnitureProgress(zone.id, purchasedUpgrades);
+            const levelsLeft = Math.max(0, zone.unlockLevel - level);
             return (
               <motion.div
                 key={zone.id}
                 animate={
                   isRepairNudge
-                    ? { boxShadow: ["0 1px 2px rgb(0 0 0 / 0.05)", "0 0 0 3px rgb(251 191 36 / 0.85)", "0 1px 2px rgb(0 0 0 / 0.05)"] }
+                    ? { opacity: [1, 0.92, 1] }
                     : false
                 }
                 transition={isRepairNudge ? { duration: 1.4, repeat: Infinity, ease: "easeInOut" } : undefined}
-                className={`flex items-center gap-2 rounded-xl border bg-white p-2 shadow-sm ${
-                  isRepairNudge ? "border-amber-400 ring-1 ring-amber-300/80" : "border-gray-100"
-                }`}
+                className={`flex items-center gap-2 rounded-[var(--ds-radius-card)] bg-[var(--c-cream)] p-2.5 ${
+                  isCurrent && isOpen
+                    ? "ds-card-active-blue"
+                    : `border ${isRepairNudge ? "border-[var(--c-rose)]" : "border-[var(--c-peach2)]"}`
+                } ${!isOpen ? "opacity-50" : ""}`}
               >
                 <span
-                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center text-3xl leading-none"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center text-2xl leading-none"
                   aria-hidden
                 >
                   {zone.emoji}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs font-bold text-gray-900">{zone.displayName}</div>
-                  <div className="text-[9px] text-gray-500">
-                    {isOpen ? (
-                      furnTotal > 0 ? (
-                        <span className="tabular-nums text-gray-600">
-                          Предметы: {furnBought}/{furnTotal}
-                        </span>
-                      ) : (
-                        <span className="text-green-600">Открыта</span>
-                      )
-                    ) : (
-                      <>🔒 Ур. {zone.unlockLevel}</>
-                    )}
+                  <div className="text-[12px] font-medium" style={{ color: "var(--c-browndark)" }}>
+                    {zone.displayName}
                   </div>
+                  {isOpen ? (
+                    <div className="mt-1">
+                      {furnTotal > 0 ? (
+                        <>
+                          <div className="ds-progress mb-0.5 w-full max-w-[160px]">
+                            <div
+                              className="ds-progress__fill ds-progress__fill--green"
+                              style={{
+                                width: `${furnTotal > 0 ? Math.min(100, (furnBought / furnTotal) * 100) : 0}%`,
+                              }}
+                            />
+                          </div>
+                          <div className="text-[9px] font-medium tabular-nums" style={{ color: "var(--c-brown)" }}>
+                            {furnBought}/{furnTotal}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-[9px] font-medium" style={{ color: "var(--c-greendark)" }}>
+                          Открыта
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-0.5 text-[9px] font-medium leading-snug" style={{ color: "var(--c-muted)" }}>
+                      🔒 Ур. {zone.unlockLevel}
+                      {levelsLeft > 0 ? ` · ещё ${levelsLeft} ур.` : ""}
+                    </p>
+                  )}
                 </div>
                 <button
                   type="button"
                   disabled={!isOpen}
                   onClick={() => onNavigateRoom(zone.id)}
-                  className={`flex-shrink-0 rounded-lg px-2 py-1.5 text-[9px] font-bold uppercase ${
-                    isOpen ? "bg-blue-500 text-white" : "cursor-not-allowed bg-gray-100 text-gray-300"
-                  }`}
+                  className={
+                    isOpen
+                      ? "ds-btn-primary shrink-0 px-3 py-2 text-[11px]"
+                      : "ds-btn-secondary ds-btn-disabled shrink-0 px-2 py-2 text-[10px]"
+                  }
                 >
                   Войти
                 </button>
@@ -251,15 +237,23 @@ export default function CafeHubScreen({
       </div>
 
       {repairNudgeZone != null ? (
-        <div className="flex-shrink-0 border-t border-amber-200/80 bg-amber-50 px-3 py-2.5 text-center shadow-[0_-4px_12px_rgb(0_0_0_/0.06)]">
-          <p className="text-[11px] font-semibold leading-snug text-amber-950">
+        <div
+          className="flex-shrink-0 border-t px-3 py-2.5 text-center"
+          style={{ borderColor: "var(--c-peach2)", background: "var(--c-peach)" }}
+        >
+          <p className="text-[11px] font-medium leading-snug" style={{ color: "var(--c-browndark)" }}>
             Отремонтируйте «{nudgeRoomName}», чтобы продолжить задания в миниигре
           </p>
         </div>
       ) : null}
       {hubOrdersToast ? (
-        <div className="flex-shrink-0 border-t border-green-200/90 bg-green-50 px-3 py-2.5 text-center shadow-[0_-4px_12px_rgb(0_0_0_/0.06)]">
-          <p className="text-[11px] font-semibold leading-snug text-green-950">{hubOrdersToast}</p>
+        <div
+          className="flex-shrink-0 border-t px-3 py-2.5 text-center"
+          style={{ borderColor: "var(--c-peach2)", background: "var(--c-cream)" }}
+        >
+          <p className="text-[11px] font-medium leading-snug" style={{ color: "var(--c-greendark)" }}>
+            {hubOrdersToast}
+          </p>
         </div>
       ) : null}
 

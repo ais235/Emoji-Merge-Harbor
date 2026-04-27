@@ -5,7 +5,6 @@
 
 import React from "react";
 import { motion } from "motion/react";
-
 export interface MainMenuScreenProps {
   hasSave: boolean;
   onContinue: () => void;
@@ -13,40 +12,12 @@ export interface MainMenuScreenProps {
   onOpenSettings: () => void;
   devMode: boolean;
   onFullReset?: () => void;
-}
-
-function MenuButton({
-  children,
-  onClick,
-  variant = "secondary",
-  disabled,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  variant?: "primary" | "secondary" | "danger" | "outline";
-  disabled?: boolean;
-}) {
-  const styles =
-    variant === "primary"
-      ? "bg-blue-500 text-white shadow-md shadow-blue-200 active:bg-blue-600"
-      : variant === "danger"
-        ? "border-2 border-red-300 bg-red-50 text-red-800 active:bg-red-100"
-        : variant === "outline"
-          ? "border-2 border-blue-400 bg-white text-blue-700 active:bg-blue-50"
-          : "border-2 border-gray-200 bg-white text-gray-900 active:bg-gray-50";
-  return (
-    <motion.button
-      type="button"
-      whileTap={{ scale: disabled ? 1 : 0.98 }}
-      disabled={disabled}
-      onClick={onClick}
-      className={`w-full max-w-sm rounded-2xl py-4 text-base font-black uppercase tracking-wide ${styles} ${
-        disabled ? "cursor-not-allowed opacity-45" : ""
-      }`}
-    >
-      {children}
-    </motion.button>
-  );
+  /** Минут с последнего сохранения; null — бейдж не показывать */
+  saveAgeMinutes: number | null;
+  playerLevel: number;
+  currentRoomName: string;
+  energy: number;
+  maxEnergy: number;
 }
 
 export default function MainMenuScreen({
@@ -56,35 +27,105 @@ export default function MainMenuScreen({
   onOpenSettings,
   devMode,
   onFullReset,
+  saveAgeMinutes,
+  playerLevel,
+  currentRoomName,
+  energy,
+  maxEnergy,
 }: MainMenuScreenProps) {
   return (
-    <div className="mx-auto flex h-[100dvh] w-full max-w-[400px] flex-col overflow-hidden bg-[#E8EDF2] font-sans select-none">
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4 pb-8">
-        <h1 className="mb-1 text-center text-2xl font-black tracking-tight text-gray-900">
-          Кафе Лены
-        </h1>
-        <p className="mb-8 text-center text-sm text-gray-500">Главное меню</p>
-
-        <nav
-          className="flex w-full max-w-sm flex-col gap-3"
-          aria-label="Основное меню"
+    <div className="ds-screen flex flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col px-3 pb-8 pt-6">
+        <div
+          className="mb-4 rounded-[14px] px-4 py-4"
+          style={{ background: "var(--c-peach)", border: "1px solid var(--c-peach2)" }}
         >
+          <div className="flex flex-col items-center text-center">
+            <div
+              className="mb-3 flex h-11 w-11 items-center justify-center rounded-[14px] text-2xl leading-none"
+              style={{
+                background: "var(--c-cream)",
+                border: "1px solid var(--c-peach2)",
+              }}
+              aria-hidden
+            >
+              ☕
+            </div>
+            <h1 className="mb-0.5 text-[15px] font-medium leading-tight" style={{ color: "var(--c-browndark)" }}>
+              Кафе Лены
+            </h1>
+            <p className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
+              Уровень {playerLevel} · {currentRoomName}
+            </p>
+            {hasSave && saveAgeMinutes != null ? (
+              <div
+                className="mt-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[9px] font-medium"
+                style={{
+                  background: "var(--c-cream)",
+                  border: "1px solid var(--c-peach2)",
+                  color: "var(--c-greendark)",
+                }}
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--c-green)" }} />
+                Сохранено {saveAgeMinutes < 1 ? "только что" : `${saveAgeMinutes} мин назад`}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <nav className="flex w-full flex-col gap-3" aria-label="Основное меню">
           {hasSave ? (
-            <MenuButton variant="primary" onClick={onContinue}>
-              Продолжить
-            </MenuButton>
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              onClick={onContinue}
+              className="ds-btn-primary flex w-full items-stretch justify-between gap-3 text-left"
+            >
+              <span className="flex flex-col justify-center">
+                <span>Продолжить</span>
+                <span className="mt-0.5 text-[10px] font-normal opacity-90">
+                  ⚡ {energy}/{maxEnergy}
+                </span>
+              </span>
+              <span className="flex items-center text-lg opacity-90" aria-hidden>
+                →
+              </span>
+            </motion.button>
           ) : null}
 
-          <MenuButton variant={hasSave ? "secondary" : "primary"} onClick={onNewGame}>
-            Новая игра
-          </MenuButton>
-
-          <MenuButton onClick={onOpenSettings}>Настройки</MenuButton>
+          <div className="grid grid-cols-2 gap-2">
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              onClick={onNewGame}
+              className="ds-btn-secondary w-full"
+            >
+              {hasSave ? "Новая игра" : "Играть"}
+            </motion.button>
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              onClick={onOpenSettings}
+              className="ds-btn-secondary w-full"
+            >
+              Настройки
+            </motion.button>
+          </div>
 
           {devMode && onFullReset ? (
-            <MenuButton variant="danger" onClick={onFullReset}>
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              onClick={onFullReset}
+              className="w-full rounded-[var(--ds-radius-btn)] border px-3 py-2.5 text-center text-[12px] font-medium"
+              style={{
+                borderColor: "var(--c-rose)",
+                color: "var(--c-rosedark)",
+                background: "var(--c-cream)",
+              }}
+            >
               Сбросить всё
-            </MenuButton>
+            </motion.button>
           ) : null}
         </nav>
       </div>

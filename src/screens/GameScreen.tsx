@@ -5,7 +5,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Zap, Coins, Star, CircleAlert, HelpCircle } from "lucide-react";
+import { Zap, Coins, Star, CircleAlert, HelpCircle, Home } from "lucide-react";
 import {
   ALL_ITEMS,
   isCobwebUnknownPlaceholder,
@@ -13,61 +13,21 @@ import {
   isOpenCellType,
   itemIsGenerator,
   itemIsResourcePickup,
-  orderCanDeliverFromGrid,
-  orderRemainingForItem,
+  itemCellShowsOrderReadyCheck,
   type GameState,
   type GridCell,
-  type Order,
   type ProgressionState,
   type CoinFlyState,
 } from "../types";
 import GameSelectionInfoModal from "../components/GameSelectionInfoModal";
 import OrderItemInfoModal from "../components/OrderItemInfoModal";
+import { OrderCard } from "../components/OrderCard";
 import {
   ENERGY_AD_REWARD,
   ENERGY_COIN_PACK_AMOUNT,
   ENERGY_COIN_PACK_COST,
   ENERGY_REGEN_INTERVAL_MS,
 } from "../gameBalance";
-
-/**
- * Один заказчик на заказ (эмодзи по роли).
- * Порядок: врач, студент, фермер, повар, механик, офисный работник, пилот, пожарный.
- */
-const ORDER_CUSTOMER_EMOJIS = [
-  "🧑‍⚕️",
-  "🧑‍🎓",
-  "🧑‍🌾",
-  "🧑‍🍳",
-  "🧑‍🔧",
-  "🧑‍💼",
-  "🧑‍✈️",
-  "🧑‍🚒",
-] as const;
-
-function customerEmojiForOrder(orderId: string): string {
-  let h = 0;
-  for (let i = 0; i < orderId.length; i++) {
-    h = (Math.imul(31, h) + orderId.charCodeAt(i)) | 0;
-  }
-  const u = h >>> 0;
-  return ORDER_CUSTOMER_EMOJIS[u % ORDER_CUSTOMER_EMOJIS.length];
-}
-
-/** На открытой клетке поля лежит экземпляр предмета из заказа. */
-function orderItemOnOpenGrid(grid: GridCell[], itemId: string): boolean {
-  return grid.some((c) => c.cellType === "item" && c.item === itemId);
-}
-
-/** Предмет ещё требуется хотя бы в одном заказе (остаток по слоту > 0). */
-function mergeableItemNeededInOrders(orders: Order[], itemId: string): boolean {
-  return orders.some((o) => orderRemainingForItem(o, itemId) > 0);
-}
-
-/** Есть ли у текущих заказов строка с этим itemId (для подсказки «сдано по заказу» на поле). */
-function itemIdInAnyOrderRequirement(orders: Order[], itemId: string): boolean {
-  return orders.some((o) => o.requirements.some((r) => r.itemId === itemId));
-}
 
 const GRID_DRAG_THRESHOLD_PX = 12;
 
@@ -77,7 +37,7 @@ const GAME_MAX_INNER_WIDTH_PX = 448;
 const GAME_COLUMN_H_PAD_PX = 16;
 /** p-1 слева/справа у рамки сетки */
 const GRID_FRAME_H_PAD_PX = 8;
-const GRID_GAP_PX = 4;
+const GRID_GAP_PX = 2;
 
 function computeGridCellSize(windowWidth: number, gridW: number): number {
   const usable =
@@ -141,6 +101,8 @@ export interface GameScreenProps {
   onWatchAdEnergy: () => void;
   /** Купить энергию за монеты. */
   onBuyEnergyForCoins: () => void;
+  /** Название комнаты в топбаре. */
+  roomDisplayName: string;
 }
 
 export default function GameScreen({
@@ -175,10 +137,10 @@ export default function GameScreen({
   onNoMovesExitHome,
   onWatchAdEnergy,
   onBuyEnergyForCoins,
+  roomDisplayName,
 }: GameScreenProps) {
   const [selectionInfoOpen, setSelectionInfoOpen] = useState(false);
   const [orderItemInfoId, setOrderItemInfoId] = useState<string | null>(null);
-  const [ordersDragging, setOrdersDragging] = useState(false);
   const [roomOrderBarFlash, setRoomOrderBarFlash] = useState(false);
   const prevRoomOrderRatioRef = useRef<number>(0);
   const [cellSize, setCellSize] = useState(() =>
@@ -239,8 +201,6 @@ export default function GameScreen({
   const pairDropRef = useRef(onCellPairDrop);
   pairDropRef.current = onCellPairDrop;
 
-  const ordersScrollRef = useRef<HTMLDivElement>(null);
-  const ordersHorizDragRef = useRef<{ pointerId: number; startX: number; scrollLeft0: number } | null>(null);
   const [dragGhost, setDragGhost] = useState<{
     from: number;
     emoji: string;
@@ -266,40 +226,6 @@ export default function GameScreen({
   useEffect(() => {
     return () => clearGlobalDragListeners();
   }, []);
-
-  function onOrdersPointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    if (e.pointerType !== "mouse" || e.button !== 0) return;
-    const target = e.target;
-    if (
-      target instanceof Element &&
-      target.closest("button, a, input, textarea, select, [role='button']")
-    ) {
-      return;
-    }
-    const el = ordersScrollRef.current;
-    if (!el) return;
-    ordersHorizDragRef.current = { pointerId: e.pointerId, startX: e.clientX, scrollLeft0: el.scrollLeft };
-    setOrdersDragging(true);
-    el.setPointerCapture(e.pointerId);
-  }
-
-  function onOrdersPointerMove(e: React.PointerEvent<HTMLDivElement>) {
-    const s = ordersHorizDragRef.current;
-    if (!s || e.pointerId !== s.pointerId) return;
-    if (e.cancelable) e.preventDefault();
-    const el = ordersScrollRef.current;
-    if (!el) return;
-    const walk = (e.clientX - s.startX) * 1.5;
-    el.scrollLeft = s.scrollLeft0 - walk;
-  }
-
-  function onOrdersPointerUp(e: React.PointerEvent<HTMLDivElement>) {
-    const s = ordersHorizDragRef.current;
-    if (!s || e.pointerId !== s.pointerId) return;
-    ordersHorizDragRef.current = null;
-    setOrdersDragging(false);
-    ordersScrollRef.current?.releasePointerCapture(e.pointerId);
-  }
 
   function handleGridCellPointerDown(
     e: React.PointerEvent<HTMLDivElement>,
@@ -371,245 +297,160 @@ export default function GameScreen({
   }
 
   return (
-    <div className="flex w-full min-h-[100dvh] justify-center bg-[#F8F9FA] font-sans select-none">
-      <div className="relative flex w-full max-w-md flex-col px-2 py-2">
+    <div className="flex w-full min-h-[100dvh] justify-center font-sans select-none" style={{ background: "var(--c-cream)" }}>
+      <div className="relative mx-auto flex w-full max-w-[390px] flex-col px-2 py-2">
       <button
         type="button"
         onClick={onToggleDevMode}
-        className={`absolute right-1 top-1 z-30 rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-wider shadow-sm border ${
+        className={`absolute right-1 top-1 z-30 min-h-[36px] rounded-[var(--ds-radius-btn)] border px-2 py-1 text-[9px] font-medium ${
           devMode
-            ? "border-green-700/30 bg-green-500 text-white"
-            : "border-gray-300 bg-gray-300 text-gray-700"
+            ? "border-[var(--c-green)] bg-[var(--c-green)] text-white"
+            : "border-[var(--c-peach2)] bg-[var(--c-peach)] text-[var(--c-brown)]"
         }`}
         title="Режим разработчика"
         aria-pressed={devMode}
       >
-        {devMode ? "DEV: ON" : "DEV: OFF"}
+        {devMode ? "Dev: вкл" : "Dev: выкл"}
       </button>
-      {/* Header + бонус монет заказа */}
-      <div className="relative w-full flex-shrink-0 mb-1.5">
+      <div className="relative z-[1] mb-1 w-full flex-shrink-0">
         {showOrderCoinBonus ? (
           <div
-            className="order-bonus-toast pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 w-max -translate-x-1/2 rounded-lg bg-amber-400 px-3 py-1 text-center text-xs font-black uppercase tracking-wide text-amber-950 shadow-md"
+            className="order-bonus-toast pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 w-max -translate-x-1/2 rounded-[var(--ds-radius-btn)] border px-3 py-1.5 text-center text-[11px] font-medium"
+            style={{
+              background: "var(--c-gold)",
+              borderColor: "var(--c-golddark)",
+              color: "var(--c-browndark)",
+            }}
             role="status"
           >
-            ×2 бонус!
+            ×2 бонус монет
           </div>
         ) : null}
-        <div className="w-full rounded-xl border border-gray-100 bg-white p-2 shadow-sm flex justify-between items-center gap-1">
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <div className="flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-2 py-1">
-              <Zap className="h-3.5 w-3.5 shrink-0 fill-blue-500 text-blue-500" />
-              <span className="text-xs font-bold tabular-nums text-blue-700">
+        <header className="ds-topbar rounded-none pl-1 pr-1 pt-11">
+          <button type="button" onClick={onGoHome} className="ds-pill-home shrink-0 gap-1">
+            <Home className="h-4 w-4 shrink-0" aria-hidden />
+            Дом
+          </button>
+          <h1 className="ds-topbar-title">{roomDisplayName}</h1>
+          <div className="flex shrink-0 flex-col items-end gap-0.5">
+            <div className="ds-stat-pill">
+              <Zap className="h-3 w-3 shrink-0" style={{ color: "var(--c-bluedark)" }} aria-hidden />
+              <span className="tabular-nums">
                 {state.energy}/{state.maxEnergy}
               </span>
             </div>
-            {energyRegenHint ? (
-              <span className="pl-0.5 text-[9px] font-semibold text-blue-500/90">{energyRegenHint}</span>
-            ) : null}
+            {energyRegenHint ? <span className="ds-regen-hint max-w-[5.5rem] text-right">{energyRegenHint}</span> : null}
             {state.energy < state.maxEnergy ? (
               <button
                 type="button"
                 onClick={onBuyEnergyForCoins}
                 disabled={progState.coins < ENERGY_COIN_PACK_COST}
-                className="max-w-[9.5rem] rounded-md border border-amber-200/80 bg-amber-50/90 px-1.5 py-0.5 text-left text-[8px] font-bold leading-tight text-amber-900 disabled:cursor-not-allowed disabled:opacity-45"
+                className="max-w-[7.5rem] rounded-[6px] border px-1 py-0.5 text-left text-[8px] font-medium leading-tight transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+                style={{
+                  borderColor: "var(--c-peach2)",
+                  background: "var(--c-cream)",
+                  color: "var(--c-browndark)",
+                }}
               >
-                +{ENERGY_COIN_PACK_AMOUNT} за {ENERGY_COIN_PACK_COST} монет
+                +{ENERGY_COIN_PACK_AMOUNT} за {ENERGY_COIN_PACK_COST} 🍪
               </button>
             ) : null}
-          </div>
-          <div className="flex flex-1 flex-col items-center px-2">
-            <div className="mb-0.5 flex items-center gap-1">
-              <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" />
-              <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
-                Уровень {progState.level}
-              </span>
-            </div>
-            <div className="h-1 w-full overflow-hidden rounded-full bg-gray-100">
-              <motion.div
-                className="h-full bg-yellow-400"
-                initial={{ width: 0 }}
-                animate={{ width: `${Math.min(xpProgressPercent, 100)}%` }}
-              />
+            <div className="ds-stat-pill mt-0.5">
+              <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+              <span className="tabular-nums">{progState.coins}</span>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 rounded-full border border-yellow-100 bg-yellow-50 px-2 py-1">
-            <Coins className="h-3.5 w-3.5 fill-yellow-600 text-yellow-600" />
-            <span className="text-xs font-bold text-yellow-700">{progState.coins}</span>
-          </div>
-        </div>
+        </header>
       </div>
 
-      <div className="mb-1 w-full min-w-0 flex-shrink-0 flex flex-wrap items-center justify-between gap-2 px-0.5">
-        <button
-          type="button"
-          onClick={onGoHome}
-          className="text-xs font-bold text-blue-600 hover:text-blue-700"
+      <div className="mb-1.5 flex min-h-[44px] w-full flex-shrink-0 items-center justify-between gap-2 px-0.5">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <Star className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+          <span className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
+            Уровень {progState.level}
+          </span>
+          <div className="ds-progress min-w-0 flex-1 max-w-[120px]">
+            <motion.div
+              className="ds-progress__fill ds-progress__fill--gold"
+              initial={{ width: 0 }}
+              animate={{ width: `${Math.min(xpProgressPercent, 100)}%` }}
+            />
+          </div>
+        </div>
+        <span
+          className="shrink-0 text-[9px] font-medium tabular-nums"
+          style={{ color: "var(--c-muted)" }}
+          title="Сколько заказов вы уже выполнили за всё время"
         >
-          ← Дом
-        </button>
-        <span className="text-[10px] font-bold text-gray-600 tabular-nums" title="Сколько заказов вы уже выполнили за всё время">
-          Выполнено заказов: {totalOrdersCompleted}
+          Заказов всего: {totalOrdersCompleted}
         </span>
       </div>
 
-      {/* Заказы: естественная высота карточек + горизонтальный скролл */}
-      <div className="mb-1.5 w-full shrink-0 px-0 py-1">
-        <div
-          ref={ordersScrollRef}
-          className="orders-scroll scroll-touch-x pb-1"
-          style={{
-            WebkitOverflowScrolling: "touch",
-            scrollSnapType: "x mandatory",
-            cursor: ordersDragging ? "grabbing" : "grab",
-          }}
-          onPointerDown={onOrdersPointerDown}
-          onPointerMove={onOrdersPointerMove}
-          onPointerUp={onOrdersPointerUp}
-          onPointerCancel={onOrdersPointerUp}
-        >
-          <div className="flex w-max flex-row items-stretch gap-2 px-1">
-          {state.orders.map((order) => {
-            const canDeliver = orderCanDeliverFromGrid(state.grid, order);
-            const customerEmoji = customerEmojiForOrder(order.id);
-            const reqs = order.requirements.slice(0, 3);
-            return (
-              <div
-                key={order.instanceId}
-                className={`flex shrink-0 flex-col rounded-xl border-2 bg-white p-2 shadow-sm transition-colors duration-150 ${canDeliver ? "border-green-400 bg-green-50/80" : "border-gray-200"}`}
-                style={{
-                  width: "140px",
-                  flexShrink: 0,
-                  scrollSnapAlign: "start",
-                }}
-              >
-                <div className="mb-2 flex items-center justify-center border-b border-gray-100 pb-2">
-                  <span className="text-4xl leading-none" aria-hidden title="Заказчик">
-                    {customerEmoji}
-                  </span>
-                </div>
-                <div className="mb-2 flex flex-wrap items-center justify-center gap-2">
-                  {reqs.map((req) => {
-                    const def = ALL_ITEMS[req.itemId];
-                    const rem = orderRemainingForItem(order, req.itemId);
-                    const rowDone = rem === 0;
-                    const done = req.count - rem;
-                    const onField = orderItemOnOpenGrid(state.grid, req.itemId);
-                    return (
-                      <button
-                        key={req.itemId}
-                        type="button"
-                        onClick={() => setOrderItemInfoId(req.itemId)}
-                        className={`relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl border-2 bg-white text-2xl leading-none shadow-sm transition-transform active:scale-95 ${rowDone ? "border-green-400 opacity-55" : onField ? "border-sky-300 ring-1 ring-sky-200" : "border-amber-100 hover:border-amber-300"}`}
-                        title="Подсказка по предмету"
-                      >
-                        <span aria-hidden>{def?.emoji ?? "❓"}</span>
-                        {rowDone ? (
-                          <span
-                            className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-green-600 text-[10px] font-black text-white"
-                            aria-hidden
-                            title="По этой строке заказа всё сдано"
-                          >
-                            ✓
-                          </span>
-                        ) : onField ? (
-                          <span
-                            className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-sky-500 text-[10px] font-black text-white shadow-sm"
-                            aria-hidden
-                            title="Уже на поле — можно нажать «Отдать»"
-                          >
-                            ✓
-                          </span>
-                        ) : req.count > 1 ? (
-                          <span className="absolute -bottom-0.5 -right-0.5 flex h-4 min-w-[1.1rem] items-center justify-center rounded-full bg-gray-900 px-0.5 text-[8px] font-black text-white tabular-nums">
-                            {done}/{req.count}
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex w-full items-center justify-between border-t border-gray-100 pt-2">
-                  <div className="flex items-center gap-0.5">
-                    <Coins className="h-3.5 w-3.5 text-yellow-600" />
-                    <span className="text-[11px] font-bold tabular-nums text-yellow-800">{order.rewardCoins}</span>
-                  </div>
-                  <div className="relative flex justify-end">
-                    {coinFly?.source === "order" && coinFly.orderId === order.id ? (
-                      <span
-                        className="coin-fly pointer-events-none absolute bottom-full left-1/2 z-10 mb-0.5 -translate-x-1/2 whitespace-nowrap"
-                        aria-hidden
-                      >
-                        +{coinFly.amount} 🍪
-                      </span>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => onCompleteOrder(order.id, order.instanceId)}
-                      disabled={!canDeliver}
-                      className={`rounded-lg px-2.5 py-1 text-[9px] font-black uppercase tracking-wide ${canDeliver ? "bg-green-500 text-white shadow-sm" : "cursor-not-allowed bg-gray-100 text-gray-400"}`}
-                    >
-                      Отдать
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {state.orders.length === 0 && ordersExhausted ? (
-            <div
-              className="flex flex-none flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 p-3 text-center"
-              style={{ width: 140, minHeight: 160, flexShrink: 0, scrollSnapAlign: "start" }}
+      <div className="mb-1.5 w-full shrink-0">
+        {state.orders.length === 0 && ordersExhausted ? (
+          <div
+            className="flex flex-col items-center justify-center gap-2 rounded-[var(--ds-radius-card)] border border-dashed p-4 text-center"
+            style={{ borderColor: "var(--c-rose)", background: "var(--c-peach)" }}
+          >
+            <span className="text-2xl leading-none" aria-hidden>
+              🏠
+            </span>
+            <span className="text-[11px] font-medium leading-snug" style={{ color: "var(--c-browndark)" }}>
+              Отремонтируйте комнату, чтобы получить ещё задания
+            </span>
+            {nextRepairCost != null ? (
+              <span className="text-[11px] font-medium tabular-nums" style={{ color: "var(--c-golddark)" }}>
+                🍪 {nextRepairCost}
+              </span>
+            ) : (
+              <span className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
+                Все шаги ремонта в комнате куплены
+              </span>
+            )}
+            <button
+              type="button"
+              className={
+                nextRepairCost != null && playerCoins >= nextRepairCost
+                  ? "ds-btn-primary w-full max-w-[200px]"
+                  : nextRepairCost != null
+                    ? "ds-btn-secondary w-full max-w-[200px] opacity-80"
+                    : "ds-btn-primary w-full max-w-[200px]"
+              }
+              onClick={onOrdersExhaustedGoHome}
             >
-              <span className="text-2xl leading-none" aria-hidden>
-                🏠
-              </span>
-              <span className="text-xs leading-tight text-amber-800">
-                Отремонтируйте комнату, чтобы получить ещё задания
-              </span>
-              {nextRepairCost != null ? (
-                <span className="text-xs font-bold text-yellow-700 tabular-nums">
-                  🪙 {nextRepairCost}
-                </span>
-              ) : (
-                <span className="text-[10px] text-amber-700/90">Все шаги ремонта в комнате куплены</span>
-              )}
-              <button
-                type="button"
-                className={`mt-0.5 rounded-lg px-2 py-1 text-xs font-bold shadow-sm ${
-                  nextRepairCost != null && playerCoins >= nextRepairCost
-                    ? "bg-green-500 text-white"
-                    : nextRepairCost != null
-                      ? "cursor-pointer bg-gray-300 text-gray-600"
-                      : "bg-amber-400 text-white"
-                }`}
-                onClick={onOrdersExhaustedGoHome}
-              >
-                {nextRepairCost != null && playerCoins >= nextRepairCost
-                  ? "Ремонтировать →"
-                  : "В хаб →"}
-              </button>
-            </div>
-          ) : null}
+              {nextRepairCost != null && playerCoins >= nextRepairCost ? "Ремонтировать" : "В хаб"}
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="orders-row justify-start px-1.5 py-2">
+            {state.orders.map((order) => (
+              <OrderCard
+                key={order.instanceId}
+                order={order}
+                grid={state.grid}
+                showCoinFly={coinFly?.source === "order" && coinFly.orderId === order.id}
+                coinFlyAmount={coinFly?.source === "order" && coinFly.orderId === order.id ? coinFly.amount : 0}
+                onItemInfo={(id) => setOrderItemInfoId(id)}
+                onDeliver={onCompleteOrder}
+              />
+            ))}
+          </div>
+        )}
         {!ordersExhausted && maxMinigameOrdersAtRoom > 0 ? (
-          <div className="w-full px-3 pb-1 pt-0.5">
-            <div className="mb-0.5 flex justify-between text-[10px] text-gray-500">
-              <span>Задания комнаты</span>
-              <span className="tabular-nums text-gray-600">
-                {minigameOrdersCompletedAtRoom}/{maxMinigameOrdersAtRoom}
+          <div className="w-full px-0.5 pb-1 pt-1">
+            <div className="mb-0.5 flex justify-between text-[10px] font-medium" style={{ color: "var(--c-muted)" }}>
+              <span>Заказы</span>
+              <span className="tabular-nums" style={{ color: "var(--c-brown)" }}>
+                {minigameOrdersCompletedAtRoom} / {maxMinigameOrdersAtRoom}
               </span>
             </div>
-            <div
-              className={`h-1.5 w-full overflow-hidden rounded-full bg-gray-200 ${roomOrderBarFlash ? "ring-2 ring-amber-300 ring-offset-1 ring-offset-white" : ""}`}
-            >
+            <div className="ds-progress w-full">
               <motion.div
-                className="h-full rounded-full bg-amber-400"
+                className="ds-progress__fill ds-progress__fill--green"
                 initial={false}
                 animate={{
                   width: `${Math.min(100, roomOrderRatio * 100)}%`,
-                  opacity: roomOrderBarFlash ? [1, 0.65, 1] : 1,
+                  opacity: roomOrderBarFlash ? [1, 0.72, 1] : 1,
                 }}
                 transition={{ duration: roomOrderBarFlash ? 0.45 : 0.25 }}
               />
@@ -626,7 +467,10 @@ export default function GameScreen({
 
       {/* Поле: квадратные ячейки по ширине экрана, фиксированный размер сетки (страница скроллится при необходимости) */}
       <div className="flex w-full shrink-0 justify-center px-0.5 pb-1">
-        <div className="relative shrink-0 rounded-[1.25rem] border border-white bg-gray-200 p-1 shadow-inner">
+        <div
+          className="relative shrink-0 rounded-[12px] border p-1"
+          style={{ borderColor: "var(--c-peach2)", background: "var(--c-peach)" }}
+        >
           <div
             className={`grid shrink-0${dragGhost ? " touch-none" : ""}`}
             style={{
@@ -656,31 +500,23 @@ export default function GameScreen({
               const genBlocked = isGen && state.energy <= 0;
               const isResPickup = Boolean(item && itemIsResourcePickup(item));
               const resIsCoins = Boolean(isResPickup && item && item.grantsCoins > 0);
-              const orderStillNeedsItem =
-                Boolean(itemId) && mergeableItemNeededInOrders(state.orders, itemId);
-              const inOrderReq = Boolean(itemId) && itemIdInAnyOrderRequirement(state.orders, itemId);
-              const showOrderNeedCheckOnGrid =
+              const showOrderReadyOnGrid =
                 Boolean(itemId && item) &&
                 cell.cellType === "item" &&
                 !isGen &&
                 !isResPickup &&
-                orderStillNeedsItem;
-              const showOrderLineDoneOnGrid =
-                Boolean(itemId && item) &&
-                cell.cellType === "item" &&
-                !isGen &&
-                !isResPickup &&
-                inOrderReq &&
-                !orderStillNeedsItem;
+                itemCellShowsOrderReadyCheck(state.orders, state.grid, itemId);
               const cellClasses = [
-                "game-grid-cell relative flex h-full w-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md transition-colors duration-200",
-                isBox
-                  ? isHintBox
-                    ? "cell-hint-box cursor-default"
-                    : "cell-box cursor-default"
-                  : isCobweb
-                    ? "cell-cobweb cursor-default"
-                    : `${isGen && genBlocked ? "cursor-not-allowed" : "cursor-pointer"} ${isSelected ? "cell-selected bg-blue-50" : isGen ? (genBlocked ? "cell-is-generator cell-generator-depleted" : "cell-is-generator") : isResPickup ? (resIsCoins ? "cell-resource-coins" : "cell-resource-energy") : "bg-white/50 hover:bg-white/80"}`,
+                "game-grid-cell relative flex h-full w-full min-h-0 min-w-0 items-center justify-center overflow-hidden transition-colors duration-200",
+                isBlocked
+                  ? "cell-lock cursor-default"
+                  : isBox
+                    ? isHintBox
+                      ? "cell-hint-box cursor-default"
+                      : "cell-box cursor-default"
+                    : isCobweb
+                      ? "cell-cobweb cursor-default"
+                      : `${isGen && genBlocked ? "cursor-not-allowed" : "cursor-pointer"} ${isSelected ? "cell-selected" : isGen ? (genBlocked ? "cell-is-generator cell-generator-depleted" : "cell-is-generator") : isResPickup ? (resIsCoins ? "cell-resource-coins" : "cell-resource-energy") : "ds-cell-open"}`,
                 mergePopIndex === index ? "cell-merge-pop" : "",
                 isUnlockFlash ? (unlockFlashStrong ? "cell-unlocked cell-unlocked-strong" : "cell-unlocked") : "",
                 isShaking ? "cell-shake" : "",
@@ -723,15 +559,11 @@ export default function GameScreen({
                 >
                   {isBox ? (
                     <>
-                      <div
-                        className={`pointer-events-none absolute inset-0 z-[1] rounded-md shadow-[inset_0_0_0_2px_rgba(100,75,45,0.4)] ${
-                          isHintBox ? "bg-[#D8C9A8]" : "bg-[#C4A882]"
-                        }`}
-                        aria-hidden
-                      />
+                      <div className={`pointer-events-none absolute inset-0 z-[1] rounded-[5px] ${isHintBox ? "cell-hint-box" : "cell-box"}`} aria-hidden />
                       {isHintBox ? (
                         <span
-                          className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center text-lg font-black text-amber-900/55"
+                          className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center text-[9px] font-medium"
+                          style={{ color: "var(--c-muted)" }}
                           aria-hidden
                         >
                           ?
@@ -750,7 +582,8 @@ export default function GameScreen({
                   ) : null}
                   {isCobweb ? (
                     <div
-                      className="pointer-events-none absolute inset-0 z-[2] rounded-md bg-[repeating-linear-gradient(135deg,rgba(100,116,139,0.35)_0_4px,rgba(148,163,184,0.2)_4px_8px)]"
+                      className="pointer-events-none absolute inset-0 z-[2] rounded-[5px]"
+                      style={{ background: "var(--c-fog)", opacity: 0.28 }}
                       aria-hidden
                     />
                   ) : null}
@@ -776,57 +609,46 @@ export default function GameScreen({
                           exit={{ scale: 0, opacity: 0 }}
                           transition={{ duration: 0.2 }}
                           style={{ fontSize: emojiFontPx }}
-                          className={`pointer-events-none inline-flex select-none items-center justify-center leading-none ${
-                            isGen && !genBlocked
-                              ? "drop-shadow-[0_2px_6px_rgba(139,92,246,0.65)]"
-                              : isResPickup
-                                ? resIsCoins
-                                  ? "drop-shadow-[0_2px_10px_rgba(234,179,8,0.55)]"
-                                  : "drop-shadow-[0_2px_10px_rgba(56,189,248,0.55)]"
-                                : ""
-                          }`}
+                          className="pointer-events-none inline-flex select-none items-center justify-center leading-none"
                         >
                           {item.emoji}
                         </motion.span>
                       )}
                     </AnimatePresence>
                   </div>
-                  {showOrderNeedCheckOnGrid ? (
-                    <span
-                      className="pointer-events-none absolute left-0.5 top-0.5 z-[11] flex h-4 w-4 items-center justify-center rounded-full bg-sky-500 text-[10px] font-black text-white shadow-sm"
-                      aria-hidden
-                      title="Ещё нужен для заказа"
-                    >
-                      ✓
-                    </span>
-                  ) : showOrderLineDoneOnGrid ? (
-                    <span
-                      className="pointer-events-none absolute left-0.5 top-0.5 z-[11] flex h-4 w-4 items-center justify-center rounded-full bg-green-600 text-[10px] font-black text-white shadow-sm"
-                      aria-hidden
-                      title="По заказам эта позиция уже закрыта — можно отдать другие"
-                    >
-                      ✓
-                    </span>
-                  ) : null}
                   {item && itemIsResourcePickup(item) ? (
                     <div
-                      className={`absolute bottom-0.5 right-0.5 z-10 rounded border px-0.5 text-[6px] font-black shadow-sm tabular-nums ${
-                        item.grantsCoins > 0
-                          ? "border-amber-300/90 bg-amber-500 text-white"
-                          : "border-sky-400/90 bg-sky-600 text-white"
-                      }`}
+                      className="absolute bottom-0.5 right-0.5 z-10 rounded border px-0.5 text-[6px] font-medium tabular-nums text-white"
+                      style={{
+                        borderColor: "var(--c-peach2)",
+                        background: item.grantsCoins > 0 ? "var(--c-golddark)" : "var(--c-bluedark)",
+                      }}
                       title="Нажми, чтобы забрать"
                     >
                       {item.grantsCoins > 0 ? `+${item.grantsCoins}` : `+${item.grantsEnergy}`}
                     </div>
                   ) : item && !itemIsGenerator(item) && !itemIsResourcePickup(item) ? (
-                    <div className="absolute bottom-0.5 right-0.5 z-10 rounded bg-white/90 px-0.5 text-[6px] font-black text-gray-500 shadow-sm">
+                    <div
+                      className="absolute bottom-0.5 right-0.5 z-10 rounded px-0.5 text-[6px] font-medium tabular-nums"
+                      style={{ background: "var(--c-cream)", color: "var(--c-muted)", border: "1px solid var(--c-peach2)" }}
+                    >
                       L{isCobweb ? cell.itemLevel : item.level}
                     </div>
                   ) : null}
+                  {showOrderReadyOnGrid ? (
+                    <span
+                      className="pointer-events-none absolute bottom-0.5 left-0.5 z-[11] flex h-3.5 w-3.5 items-center justify-center rounded-full border-[1.5px] border-white text-[8px] font-black text-white"
+                      style={{ background: "#4CAF50" }}
+                      aria-hidden
+                      title="По заказам на поле хватает таких предметов"
+                    >
+                      ✓
+                    </span>
+                  ) : null}
                   {isGen ? (
                     <div
-                      className="pointer-events-none absolute bottom-0.5 right-0.5 z-10 rounded bg-sky-600 px-0.5 text-[7px] font-black leading-none text-white shadow-sm tabular-nums"
+                      className="pointer-events-none absolute bottom-0.5 right-0.5 z-10 rounded px-0.5 text-[7px] font-medium leading-none tabular-nums text-white"
+                      style={{ background: "var(--c-bluedark)" }}
                       title={genBlocked ? "Нужна энергия ⚡" : "Тап по генератору — создать предмет (−1 ⚡)"}
                     >
                       ⚡{state.energy}
@@ -837,16 +659,15 @@ export default function GameScreen({
             })}
           </div>
           {!devMode && state.energy === 0 ? (
-            <div className="absolute inset-0 z-[25] flex flex-col items-center justify-center rounded-[1rem] bg-black/50 px-3 text-center backdrop-blur-[1px]">
-              <span className="mb-2 text-sm font-black text-white">Энергия закончилась</span>
-              <button
-                type="button"
-                onClick={onWatchAdEnergy}
-                className="mb-2 rounded-xl bg-yellow-400 px-4 py-2.5 text-sm font-black text-gray-900 shadow-lg active:scale-[0.98]"
-              >
+            <div
+              className="absolute inset-0 z-[25] flex flex-col items-center justify-center rounded-[12px] px-3 text-center"
+              style={{ background: "rgba(92, 61, 34, 0.55)" }}
+            >
+              <span className="mb-2 text-sm font-medium text-white">Энергия закончилась</span>
+              <button type="button" onClick={onWatchAdEnergy} className="ds-btn-primary mb-2 max-w-[260px]">
                 Смотреть рекламу → +{ENERGY_AD_REWARD} ⚡
               </button>
-              <span className="max-w-[220px] text-[11px] leading-snug text-white/80">
+              <span className="max-w-[220px] text-[11px] font-medium leading-snug text-white/90">
                 Или подождите: +1 энергии каждые 3 минуты
               </span>
             </div>
@@ -854,7 +675,7 @@ export default function GameScreen({
           {dragGhost ? (
             <div
               aria-hidden
-              className="pointer-events-none fixed z-[80] text-xl sm:text-2xl drop-shadow-[0_4px_12px_rgba(0,0,0,0.35)]"
+              className="pointer-events-none fixed z-[80] text-xl sm:text-2xl"
               style={{
                 left: dragGhost.x,
                 top: dragGhost.y,
@@ -871,7 +692,12 @@ export default function GameScreen({
         <button
           type="button"
           onClick={() => setSelectionInfoOpen(true)}
-          className="flex-shrink-0 rounded-lg border border-gray-100 bg-white p-2.5 text-amber-600 shadow-sm transition-colors hover:bg-amber-50 hover:text-amber-700"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--ds-radius-btn)] border transition-transform active:scale-[0.97]"
+          style={{
+            borderColor: "var(--c-peach2)",
+            background: "var(--c-cream)",
+            color: "var(--c-rosedark)",
+          }}
           aria-label="Информация о выделенной клетке"
           title="О выделенном предмете или генераторе (повторный клик по генератору — выдача)"
         >
@@ -881,7 +707,12 @@ export default function GameScreen({
         <button
           type="button"
           onClick={onOpenTutorial}
-          className="flex-shrink-0 rounded-lg border border-gray-100 bg-white p-2.5 text-gray-400 shadow-sm transition-colors hover:text-blue-500"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--ds-radius-btn)] border transition-transform active:scale-[0.97]"
+          style={{
+            borderColor: "var(--c-peach2)",
+            background: "var(--c-cream)",
+            color: "var(--c-muted)",
+          }}
           aria-label="Справка по игре"
         >
           <HelpCircle className="h-5 w-5" />
@@ -898,131 +729,6 @@ export default function GameScreen({
         maxEnergy={state.maxEnergy}
       />
 
-      <style>{`
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        @keyframes order-bonus-toast-fade {
-          0% { opacity: 0; }
-          18% { opacity: 1; }
-          82% { opacity: 1; }
-          100% { opacity: 0; }
-        }
-        .order-bonus-toast {
-          animation: order-bonus-toast-fade 1.5s ease forwards;
-        }
-        @keyframes merge-pop {
-          0% { transform: scale(0.5); opacity: 0.5; }
-          60% { transform: scale(1.3); }
-          100% { transform: scale(1); opacity: 1; }
-        }
-        .cell-merge-pop {
-          animation: merge-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
-       @keyframes cell-pulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.08); }
-        }
-        .cell-selected {
-          animation: cell-pulse 0.6s ease-in-out infinite;
-          border: 2px solid #378ADD;
-          box-sizing: border-box;
-        }
-        .cell-resource-coins {
-          background: linear-gradient(160deg, rgba(254, 243, 199, 0.95), rgba(251, 191, 36, 0.35));
-          box-shadow: inset 0 0 0 2px rgba(245, 158, 11, 0.45);
-        }
-        .cell-resource-energy {
-          background: linear-gradient(160deg, rgba(224, 242, 254, 0.95), rgba(56, 189, 248, 0.3));
-          box-shadow: inset 0 0 0 2px rgba(14, 165, 233, 0.45);
-        }
-        .cell-is-generator {
-          background: linear-gradient(145deg, rgba(237, 233, 254, 0.95), rgba(221, 214, 254, 0.75));
-          box-shadow: inset 0 0 0 2px rgba(139, 92, 246, 0.45);
-        }
-        .cell-is-generator:hover {
-          background: linear-gradient(145deg, rgba(245, 243, 255, 1), rgba(233, 213, 255, 0.9));
-        }
-        .cell-generator-depleted {
-          opacity: 0.72;
-          filter: grayscale(0.35);
-        }
-        .cell-generator-depleted:hover {
-          opacity: 0.8;
-        }
-        @keyframes shake {
-          0%, 100% { transform: translateX(0); }
-          25% { transform: translateX(-4px); }
-          75% { transform: translateX(4px); }
-        }
-        .cell-shake {
-          animation: shake 0.3s ease-in-out;
-        }
-        @keyframes cell-unlock-flash {
-          0% {
-            transform: scale(1);
-            filter: brightness(1);
-            box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
-          }
-          45% {
-            transform: scale(1.06);
-            filter: brightness(1.2);
-            box-shadow:
-              0 0 16px 2px rgba(187, 247, 208, 0.9),
-              inset 0 0 20px rgba(255, 255, 255, 0.45);
-          }
-          100% {
-            transform: scale(1);
-            filter: brightness(1);
-            box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
-          }
-        }
-        .cell-unlocked {
-          animation: cell-unlock-flash 0.3s ease-out forwards;
-        }
-        @keyframes cell-unlock-flash-strong {
-          0% {
-            transform: scale(1);
-            filter: brightness(1);
-            box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
-          }
-          40% {
-            transform: scale(1.1);
-            filter: brightness(1.35);
-            box-shadow:
-              0 0 22px 4px rgba(253, 224, 71, 0.95),
-              inset 0 0 24px rgba(255, 255, 255, 0.55);
-          }
-          100% {
-            transform: scale(1);
-            filter: brightness(1);
-            box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
-          }
-        }
-        .cell-unlocked-strong {
-          animation: cell-unlock-flash-strong 0.85s ease-out forwards;
-        }
-        .cell-box {
-          background: #c4a882;
-        }
-        .cell-hint-box {
-          background: #d8c9a8;
-        }
-        .cell-cobweb {
-          background: linear-gradient(165deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.92));
-          box-shadow: inset 0 0 0 2px rgba(148, 163, 184, 0.35);
-        }
-        @keyframes coin-fly {
-          0% { transform: translateY(0) scale(1); opacity: 1; }
-          100% { transform: translateY(-60px) scale(0.8); opacity: 0; }
-        }
-        .coin-fly {
-          animation: coin-fly 0.8s ease-out forwards;
-          font-size: 14px;
-          font-weight: 500;
-          color: #BA7517;
-        }
-      `}</style>
-
       {isNoMoves ? (
         <div
           className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center px-4"
@@ -1032,21 +738,17 @@ export default function GameScreen({
             role="dialog"
             aria-modal="false"
             aria-labelledby="no-moves-title"
-            className="pointer-events-auto w-full max-w-[280px] rounded-2xl border border-gray-200 bg-white/95 p-5 text-center shadow-xl"
+            className="ds-card pointer-events-auto w-full max-w-[280px] p-5 text-center"
           >
-            <h2 id="no-moves-title" className="mb-2 text-lg font-black text-gray-900">
+            <h2 id="no-moves-title" className="mb-2 text-[15px] font-medium" style={{ color: "var(--c-browndark)" }}>
               Нет доступных ходов
             </h2>
-            <p className="mb-4 text-xs text-gray-600">
+            <p className="mb-4 text-[11px] font-medium leading-snug" style={{ color: "var(--c-brown)" }}>
               Сливайте одинаковые предметы, выполняйте заказы и используйте генератор (нужна энергия ⚡ и свободная
               клетка).
             </p>
             <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={onNoMovesExitHome}
-                className="w-full rounded-xl border-2 border-gray-200 bg-white py-3 text-sm font-bold text-gray-800 shadow-sm active:bg-gray-50"
-              >
+              <button type="button" onClick={onNoMovesExitHome} className="ds-btn-secondary w-full">
                 Выйти домой
               </button>
             </div>
