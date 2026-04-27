@@ -2,6 +2,8 @@
 
 /* ─── Кафе Лены: палитра и токены ─── */
 :root {
+  /** Макс. ширина колонки UI на телефоне/планшете (портрет); сетка и экраны подстраиваются под 100% до этого предела */
+  --app-content-max: 520px;
   --c-cream: #fdf6ed;
   --c-peach: #f5e6d3;
   --c-peach2: #edd5b8;
@@ -38,6 +40,10 @@ body {
   background: var(--c-cream);
 }
 
+#root {
+  min-height: 100dvh;
+}
+
 /** iOS / мобильный: инерционный скролл + явный touch-action */
 .scroll-touch-x {
   -webkit-overflow-scrolling: touch;
@@ -72,12 +78,16 @@ body {
   min-width: 0;
 }
 
-/** Карточка заказа: эмодзи портрета и предметов на подносе масштабируются с шириной экрана (3 карточки в ряд). */
+/** Карточка заказа: эмодзи от ширины колонки игры (не от всего vw — иначе на широком портрете переразмер). */
 .order-card-portrait-emoji {
-  font-size: clamp(2.35rem, calc((100vw - 2.5rem) / 4.35), 3.5rem);
+  font-size: clamp(
+    2.35rem,
+    calc((min(100vw, var(--app-content-max)) - 2.5rem) / 4.35),
+    3.5rem
+  );
 }
 .order-card-tray-emoji {
-  font-size: clamp(1.05rem, calc((100vw - 2.5rem) / 11), 1.5rem);
+  font-size: clamp(1.05rem, calc((min(100vw, var(--app-content-max)) - 2.5rem) / 11), 1.5rem);
 }
 
 .scroll-touch-y {
@@ -96,13 +106,15 @@ body {
   display: none;
 }
 
-/* ─── Оболочка экрана (~390px) ─── */
+/* ─── Оболочка экрана: на всю ширину до --app-content-max (удобный вертикальный мобильный / узкий планшет) ─── */
 .ds-screen {
   margin-left: auto;
   margin-right: auto;
-  max-width: 390px;
+  box-sizing: border-box;
   width: 100%;
+  max-width: min(100%, var(--app-content-max));
   min-height: 100dvh;
+  min-height: 100svh;
   background: var(--c-cream);
   user-select: none;
 }

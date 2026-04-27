@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Zap, Coins, Star, CircleAlert, HelpCircle, Home } from "lucide-react";
 import {
@@ -31,19 +31,16 @@ import {
 
 const GRID_DRAG_THRESHOLD_PX = 12;
 
-/** max-w-md (28rem) — ширина колонки миниигры */
-const GAME_MAX_INNER_WIDTH_PX = 448;
-/** px-2 слева/справа у колонки игры */
-const GAME_COLUMN_H_PAD_PX = 16;
-/** p-1 слева/справа у рамки сетки */
-const GRID_FRAME_H_PAD_PX = 8;
+/** px-0.5 у ряда сетки + рамка p-1 + border ~1px с каждой стороны (горизонтальный «хром» вокруг клеток) */
+const GRID_WRAP_CHROME_H_PX = 14;
+/** Верхняя граница размера ячейки на очень широких портретах */
+const GRID_CELL_MAX_PX = 58;
 const GRID_GAP_PX = 2;
 
-function computeGridCellSize(windowWidth: number, gridW: number): number {
-  const usable =
-    Math.min(windowWidth, GAME_MAX_INNER_WIDTH_PX) - GAME_COLUMN_H_PAD_PX - GRID_FRAME_H_PAD_PX;
+function computeGridCellSize(columnContentWidth: number, gridW: number): number {
+  const usable = Math.max(120, columnContentWidth - GRID_WRAP_CHROME_H_PX);
   const raw = Math.floor((usable - (gridW - 1) * GRID_GAP_PX) / gridW);
-  return Math.max(24, raw);
+  return Math.max(24, Math.min(GRID_CELL_MAX_PX, raw));
 }
 
 /**
@@ -143,15 +140,22 @@ export default function GameScreen({
   const [orderItemInfoId, setOrderItemInfoId] = useState<string | null>(null);
   const [roomOrderBarFlash, setRoomOrderBarFlash] = useState(false);
   const prevRoomOrderRatioRef = useRef<number>(0);
-  const [cellSize, setCellSize] = useState(() =>
-    typeof window !== "undefined" ? computeGridCellSize(window.innerWidth, gridWidth) : 36
-  );
+  const gameColumnRef = useRef<HTMLDivElement>(null);
+  const [cellSize, setCellSize] = useState(36);
 
-  useEffect(() => {
-    const calc = () => setCellSize(computeGridCellSize(window.innerWidth, gridWidth));
-    calc();
-    window.addEventListener("resize", calc);
-    return () => window.removeEventListener("resize", calc);
+  useLayoutEffect(() => {
+    const el = gameColumnRef.current;
+    if (!el) return;
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) || 16;
+      const inner = Math.max(0, el.clientWidth - padX);
+      setCellSize(computeGridCellSize(inner, gridWidth));
+    };
+    measure();
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [gridWidth]);
 
   const [energyUiTick, setEnergyUiTick] = useState(0);
@@ -297,8 +301,14 @@ export default function GameScreen({
   }
 
   return (
-    <div className="flex w-full min-h-[100dvh] justify-center font-sans select-none" style={{ background: "var(--c-cream)" }}>
-      <div className="relative mx-auto flex w-full max-w-[390px] flex-col px-2 py-2">
+    <div
+      className="flex w-full min-h-[100dvh] justify-center overflow-x-hidden font-sans select-none"
+      style={{ background: "var(--c-cream)" }}
+    >
+      <div
+        ref={gameColumnRef}
+        className="relative mx-auto box-border flex w-full max-w-[min(100%,var(--app-content-max))] flex-col px-2 py-2"
+      >
       <button
         type="button"
         onClick={onToggleDevMode}
@@ -332,29 +342,40 @@ export default function GameScreen({
             Дом
           </button>
           <h1 className="ds-topbar-title">{roomDisplayName}</h1>
-          <div className="flex shrink-0 flex-col items-end gap-0.5">
+          <div className="flex w-[7.75rem] shrink-0 flex-col items-end gap-0.5">
             <div className="ds-stat-pill">
               <Zap className="h-3 w-3 shrink-0" style={{ color: "var(--c-bluedark)" }} aria-hidden />
               <span className="tabular-nums">
                 {state.energy}/{state.maxEnergy}
               </span>
             </div>
-            {energyRegenHint ? <span className="ds-regen-hint max-w-[5.5rem] text-right">{energyRegenHint}</span> : null}
-            {state.energy < state.maxEnergy ? (
+            <div className="flex min-h-[14px] w-full items-center justify-end">
+              <span
+                className="ds-regen-hint max-w-[5.5rem] text-right leading-tight"
+                style={{ opacity: energyRegenHint ? 1 : 0 }}
+                aria-hidden={!energyRegenHint}
+              >
+                {energyRegenHint || "\u00a0"}
+              </span>
+            </div>
+            <div className="flex min-h-[30px] w-full items-center justify-end">
               <button
                 type="button"
                 onClick={onBuyEnergyForCoins}
-                disabled={progState.coins < ENERGY_COIN_PACK_COST}
+                disabled={progState.coins < ENERGY_COIN_PACK_COST || state.energy >= state.maxEnergy}
+                tabIndex={state.energy >= state.maxEnergy ? -1 : 0}
                 className="max-w-[7.5rem] rounded-[6px] border px-1 py-0.5 text-left text-[8px] font-medium leading-tight transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
                 style={{
                   borderColor: "var(--c-peach2)",
                   background: "var(--c-cream)",
                   color: "var(--c-browndark)",
+                  visibility: state.energy < state.maxEnergy ? "visible" : "hidden",
                 }}
+                aria-hidden={state.energy >= state.maxEnergy}
               >
                 +{ENERGY_COIN_PACK_AMOUNT} за {ENERGY_COIN_PACK_COST} 🍪
               </button>
-            ) : null}
+            </div>
             <div className="ds-stat-pill mt-0.5">
               <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
               <span className="tabular-nums">{progState.coins}</span>

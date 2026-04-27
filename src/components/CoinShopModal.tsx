@@ -40,7 +40,7 @@ export default function CoinShopModal({
       aria-labelledby="coin-shop-title"
     >
       <div
-        className="max-h-[85dvh] w-full max-w-[390px] overflow-hidden rounded-t-[var(--ds-radius-card)] border sm:rounded-[var(--ds-radius-card)]"
+        className="max-h-[85dvh] w-full max-w-[min(100%,var(--app-content-max))] overflow-hidden rounded-t-[var(--ds-radius-card)] border sm:rounded-[var(--ds-radius-card)]"
         style={{ background: "var(--c-cream)", borderColor: "var(--c-peach2)" }}
       >
         <div
