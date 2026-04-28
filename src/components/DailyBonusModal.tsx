@@ -4,6 +4,7 @@
  */
 
 import React from "react";
+import { Coins } from "lucide-react";
 
 export const DAILY_REWARDS: Record<
   number,
@@ -76,8 +77,9 @@ export default function DailyBonusModal({
         <div className="mt-6 rounded-2xl bg-amber-50 py-4">
           <p className="text-xs font-bold uppercase text-amber-800">Сегодня</p>
           <div className="mt-2 flex items-center justify-center gap-4 text-lg font-black text-gray-900">
-            <span>
-              💰 {reward.coins}
+            <span className="inline-flex items-center gap-1.5">
+              <Coins className="h-5 w-5 shrink-0 text-amber-700" aria-hidden />
+              {reward.coins}
             </span>
             <span>
               ⚡ {reward.energy}

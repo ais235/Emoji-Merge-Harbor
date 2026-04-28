@@ -615,7 +615,7 @@ export const ITEM_CHAINS: Record<string, ItemChain> = {
       {
         id: "s6",
         name: "Печенье",
-        emoji: "💰",
+        emoji: "🍪",
         level: 6,
         chain: "sweets",
         xpReward: 32,

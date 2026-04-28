@@ -7,7 +7,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { useUiScaling } from "../hooks/useUiScaling";
-import { CircleAlert, HelpCircle } from "lucide-react";
+import { CircleAlert, Coins, HelpCircle } from "lucide-react";
 import {
   ALL_ITEMS,
   isCobwebUnknownPlaceholder,
@@ -426,8 +426,9 @@ function GameScreenContent({
               Отремонтируйте комнату, чтобы получить ещё задания
             </span>
             {nextRepairCost != null ? (
-              <span className="text-[11px] font-medium tabular-nums" style={{ color: "var(--c-golddark)" }}>
-                💰 {nextRepairCost}
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium tabular-nums" style={{ color: "var(--c-golddark)" }}>
+                <Coins className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+                {nextRepairCost}
               </span>
             ) : (
               <span className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
@@ -614,7 +615,10 @@ function GameScreenContent({
                       className="coin-fly pointer-events-none absolute bottom-full left-1/2 z-20 mb-0.5 -translate-x-1/2 whitespace-nowrap"
                       aria-hidden
                     >
-                      +{coinFly.amount} 💰
+                      <span className="inline-flex items-center gap-1">
+                        +{coinFly.amount}
+                        <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+                      </span>
                     </span>
                   ) : null}
                   <div className="relative z-[5] flex items-center justify-center overflow-hidden">

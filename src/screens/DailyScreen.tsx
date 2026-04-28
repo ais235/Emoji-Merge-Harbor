@@ -5,7 +5,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useUiScaling } from "../hooks/useUiScaling";
-import { Home } from "lucide-react";
+import { Coins, Home } from "lucide-react";
 import { DAILY_REWARDS } from "../components/DailyBonusModal";
 import {
   DAILY_QUESTS,
@@ -108,8 +108,11 @@ export default function DailyScreen({
           </div>
           {eligible ? (
             <>
-              <p className="mb-2 text-center text-[12px] font-medium" style={{ color: "var(--c-browndark)" }}>
-                Награда: 💰 {rewardToday.coins} · ⚡ {rewardToday.energy}
+              <p className="mb-2 flex items-center justify-center gap-1.5 text-center text-[12px] font-medium" style={{ color: "var(--c-browndark)" }}>
+                Награда:
+                <Coins className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+                {rewardToday.coins}
+                <span>· ⚡ {rewardToday.energy}</span>
               </p>
               <button type="button" onClick={() => onClaimDailyBonus(rewardToday.coins, rewardToday.energy)} className="ds-btn-primary w-full">
                 Забрать бонус
@@ -138,14 +141,20 @@ export default function DailyScreen({
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex min-w-0 items-start gap-2">
                       <span className="text-xl" aria-hidden>
-                        {task.icon}
+                        {task.id === "dq_coins" ? (
+                          <Coins className="h-5 w-5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+                        ) : (
+                          task.icon
+                        )}
                       </span>
                       <div>
                         <div className="text-[13px] font-medium" style={{ color: "var(--c-browndark)" }}>
                           {task.text}
                         </div>
-                        <div className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
-                          Награда: 💰 {task.reward}
+                        <div className="inline-flex items-center gap-1 text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
+                          Награда:
+                          <Coins className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+                          {task.reward}
                         </div>
                       </div>
                     </div>
@@ -199,8 +208,10 @@ export default function DailyScreen({
                   <div className="text-[13px] font-medium" style={{ color: "var(--c-browndark)" }}>
                     {WEEKLY_QUEST.text}
                   </div>
-                  <div className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
-                    Награда: 💰 {WEEKLY_QUEST.reward}
+                  <div className="inline-flex items-center gap-1 text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
+                    Награда:
+                    <Coins className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+                    {WEEKLY_QUEST.reward}
                   </div>
                 </div>
               </div>

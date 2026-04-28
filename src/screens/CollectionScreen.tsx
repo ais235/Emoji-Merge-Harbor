@@ -5,7 +5,7 @@
 
 import React from "react";
 import { useUiScaling } from "../hooks/useUiScaling";
-import { Home } from "lucide-react";
+import { Coins, Home } from "lucide-react";
 import {
   ITEM_CHAINS,
   itemIsGenerator,
@@ -60,7 +60,7 @@ export default function CollectionScreen({ progState, onBack }: CollectionScreen
                   {reward ? (
                     <>
                       {" "}
-                      · Полный сбор: +{reward.coins} 💰 +{reward.energy} ⚡
+                      · Полный сбор: +{reward.coins} монет +{reward.energy} ⚡
                       {got === total && total > 0 ? (claimed ? " · награда получена" : " · награда ждёт") : null}
                     </>
                   ) : null}
@@ -71,7 +71,7 @@ export default function CollectionScreen({ progState, onBack }: CollectionScreen
                   className="mb-3 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium"
                   style={{ background: "var(--c-peach)", borderColor: "var(--c-peach2)", color: "var(--c-brown)" }}
                 >
-                  <span style={{ color: "var(--c-gold)" }}>💰</span>
+                  <Coins className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
                   <span style={{ color: "var(--c-golddark)" }}>+{reward.coins}</span>
                   <span style={{ color: "var(--c-rose)" }}>⚡</span>
                   <span>+{reward.energy}</span>

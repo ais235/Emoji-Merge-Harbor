@@ -259,9 +259,7 @@ export default function RoomScreen({
                       {u.description}
                     </p>
                     <div className="mb-3 flex items-center gap-1.5 text-[14px] font-bold">
-                      <span style={{ color: "var(--c-gold)" }} aria-hidden>
-                        💰
-                      </span>
+                      <Coins className="h-4 w-4 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
                       <span style={{ color: "var(--c-golddark)" }}>{u.cost}</span>
                     </div>
                     <button

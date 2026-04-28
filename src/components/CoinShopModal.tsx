@@ -47,8 +47,8 @@ export default function CoinShopModal({
           className="flex items-center justify-between border-b px-3 py-2.5"
           style={{ borderColor: "var(--c-peach2)", background: "var(--c-peach)" }}
         >
-          <h2 id="coin-shop-title" className="text-[13px] font-medium" style={{ color: "var(--c-browndark)" }}>
-            Улучшения за 💰
+          <h2 id="coin-shop-title" className="flex items-center gap-1 text-[13px] font-medium" style={{ color: "var(--c-browndark)" }}>
+            Улучшения за <Coins className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
           </h2>
           <button
             type="button"
@@ -85,8 +85,9 @@ export default function CoinShopModal({
                     {u.description}
                   </p>
                   <div className="mb-2 flex items-center justify-between text-[12px]">
-                    <span className="font-medium" style={{ color: "var(--c-golddark)" }}>
-                      💰 {u.cost}
+                    <span className="inline-flex items-center gap-1 font-medium" style={{ color: "var(--c-golddark)" }}>
+                      <Coins className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+                      {u.cost}
                     </span>
                     {owned ? (
                       <span className="font-medium" style={{ color: "var(--c-greendark)" }}>

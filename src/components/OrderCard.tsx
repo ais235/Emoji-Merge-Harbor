@@ -150,7 +150,10 @@ export function OrderCard({
             className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-0.5 -translate-x-1/2 whitespace-nowrap text-[10px] font-semibold text-[#6B4400]"
             aria-hidden
           >
-            +{coinFlyAmount} 💰
+            <span className="inline-flex items-center gap-1">
+              +{coinFlyAmount}
+              <Coins className="h-3 w-3 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
+            </span>
           </span>
         ) : null}
       </div>
