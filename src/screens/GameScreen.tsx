@@ -15,6 +15,7 @@ import {
   isOpenCellType,
   itemIsGenerator,
   itemIsResourcePickup,
+  gridCellSuppliesItemForOrder,
   itemCellShowsOrderReadyCheck,
   type GameState,
   type GridCell,
@@ -546,7 +547,7 @@ function GameScreenContent({
               const resIsCoins = Boolean(isResPickup && item && item.grantsCoins > 0);
               const showOrderReadyOnGrid =
                 Boolean(itemId && item) &&
-                cell.cellType === "item" &&
+                gridCellSuppliesItemForOrder(cell, itemId) &&
                 !isGen &&
                 !isResPickup &&
                 itemCellShowsOrderReadyCheck(state.orders, state.grid, itemId);

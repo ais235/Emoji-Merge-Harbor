@@ -71,6 +71,14 @@ export function isCobwebUnknownPlaceholder(cell: GridCell): boolean {
   return cell.cellType === "cobweb" && cell.item === COBWEB_UNKNOWN_ITEM_ID;
 }
 
+/** Предмет учитывается для заказа: свободная клетка или тот же предмет под паутиной (эмодзи виден). */
+export function gridCellSuppliesItemForOrder(cell: GridCell, itemId: ItemId): boolean {
+  if (cell.item !== itemId) return false;
+  if (cell.cellType === "item") return true;
+  if (cell.cellType === "cobweb" && !isCobwebUnknownPlaceholder(cell)) return true;
+  return false;
+}
+
 /** Одновременно активных заказов на экране миниигры. */
 export const MAX_ACTIVE_ORDERS = 3;
 
@@ -296,11 +304,14 @@ export function orderIsFulfilled(order: Order): boolean {
   return order.requirements.every((r) => orderRemainingForItem(order, r.itemId) === 0);
 }
 
-/** Сколько открытых клеток `item` с данным id на поле. */
+/**
+ * Сколько клеток с данным предметом доступно для заказов:
+ * обычный предмет и тот же предмет под паутиной (клетка не `item`).
+ */
 export function countOpenItemCellsForId(grid: GridCell[], itemId: ItemId): number {
   let n = 0;
   for (const c of grid) {
-    if (c.cellType === "item" && c.item === itemId) n += 1;
+    if (gridCellSuppliesItemForOrder(c, itemId)) n += 1;
   }
   return n;
 }
@@ -324,7 +335,7 @@ export function orderReqLineSatisfiedOnGrid(grid: GridCell[], order: Order, req:
   return countOpenItemCellsForId(grid, req.itemId) >= rem;
 }
 
-/** Все незакрытые строки заказа можно снять с поля одним действием (только `item`, не cobweb). */
+/** Все незакрытые строки заказа можно снять с поля одним действием (включая предмет под паутиной). */
 export function orderAllRemainingSatisfiedFromGrid(grid: GridCell[], order: Order): boolean {
   const seen = new Set<ItemId>();
   for (const r of order.requirements) {
@@ -337,7 +348,7 @@ export function orderAllRemainingSatisfiedFromGrid(grid: GridCell[], order: Orde
   return true;
 }
 
-/** Индексы клеток для полной сдачи заказа (порядок обхода слева направо). */
+/** Индексы клеток для полной сдачи заказа (порядок обхода слева направо; можно снять с паутины). */
 export function collectIndicesForFullOrderDelivery(grid: GridCell[], order: Order): number[] {
   const indices: number[] = [];
   const used = new Set<number>();
@@ -348,7 +359,7 @@ export function collectIndicesForFullOrderDelivery(grid: GridCell[], order: Orde
     let need = orderRemainingForItem(order, r.itemId);
     for (let i = 0; i < grid.length && need > 0; i++) {
       if (used.has(i)) continue;
-      if (grid[i].cellType === "item" && grid[i].item === r.itemId) {
+      if (gridCellSuppliesItemForOrder(grid[i], r.itemId)) {
         indices.push(i);
         used.add(i);
         need -= 1;
@@ -364,11 +375,12 @@ export function orderCanDeliverFromGrid(grid: GridCell[], order: Order): boolean
   return orderAllRemainingSatisfiedFromGrid(grid, order);
 }
 
-/** Первая клетка с предметом для сдачи заказа (только `item`). */
+/** Первая клетка с предметом для сдачи заказа (`item` или паутина с известным предметом). */
 export function findFirstCellIndexForOrderDelivery(grid: GridCell[], order: Order): number {
   for (let i = 0; i < grid.length; i++) {
     const id = grid[i].item;
-    if (id != null && grid[i].cellType === "item" && orderRemainingForItem(order, id) > 0) return i;
+    if (id != null && gridCellSuppliesItemForOrder(grid[i], id) && orderRemainingForItem(order, id) > 0)
+      return i;
   }
   return -1;
 }
