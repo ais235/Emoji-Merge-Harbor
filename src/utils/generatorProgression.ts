@@ -26,7 +26,7 @@ export const GENERATOR_PROGRESSION_LIST: GeneratorProgressDef[] = (
     ["gen_bedroom", "bedroom_cozy", { type: "player_level" as const, value: 3 }, "left" as const],
     ["gen_bathroom", "bathroom_fresh", { type: "orders_completed" as const, value: 8, minLevel: 4 }, "right" as const],
     ["gen_terrace", "terrace_plants", { type: "player_level" as const, value: 5 }, "top" as const],
-    ["gen_office", "office_work", { type: "orders_completed" as const, value: 25, minLevel: 8 }, "center" as const],
+    ["gen_office", "office_work", { type: "orders_completed" as const, value: 18, minLevel: 6 }, "center" as const],
     ["gen_lounge", "lounge_drinks", { type: "player_level" as const, value: 7 }, "bottom" as const],
     ["gen_secret", "secret_mystic", { type: "player_level" as const, value: 10 }, "center" as const],
     ["gen_garden", "garden_harvest", { type: "orders_completed" as const, value: 40, minLevel: 12 }, "bottom" as const],
@@ -88,6 +88,17 @@ function candidateIndicesForChest(
 ): number[] {
   const preferred: number[] = [];
   const fallback: number[] = [];
+  const cx = Math.floor(width / 2);
+  const cy = Math.floor(height / 2);
+  const byCenter = (a: number, b: number) => {
+    const ax = a % width;
+    const ay = Math.floor(a / width);
+    const bx = b % width;
+    const by = Math.floor(b / width);
+    const da = Math.abs(ax - cx) + Math.abs(ay - cy);
+    const db = Math.abs(bx - cx) + Math.abs(by - cy);
+    return da - db || a - b;
+  };
   for (let i = 0; i < grid.length; i++) {
     const c = grid[i];
     if (c.cellType !== "box") continue;
@@ -97,8 +108,8 @@ function candidateIndicesForChest(
     const row = Math.floor(i / width);
     if (hintMatches(hint, col, row, width, height)) preferred.push(i);
   }
-  preferred.sort((a, b) => a - b);
-  fallback.sort((a, b) => a - b);
+  preferred.sort(byCenter);
+  fallback.sort(byCenter);
   return preferred.length > 0 ? preferred : fallback;
 }
 
