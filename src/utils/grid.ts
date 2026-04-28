@@ -24,8 +24,14 @@ export function getNeighborIndices(index: number, width: number, height: number)
   return neighbors;
 }
 
+function isSpawnableEmptyCell(cell: GridCell): boolean {
+  return !isBlockedCellType(cell.cellType) && cell.cellType === "empty" && cell.item === null;
+}
+
 /**
- * Пустая клетка для выдачи от генератора: сначала случайный сосед, иначе любая свободная.
+ * Пустая клетка для выдачи от генератора:
+ * выбираем только ближайшее «кольцо» вокруг генератора (Chebyshev distance),
+ * а внутри кольца — случайную клетку.
  */
 export function pickEmptyCellForGeneratorSpawn(
   grid: GridCell[],
@@ -33,19 +39,31 @@ export function pickEmptyCellForGeneratorSpawn(
   width: number,
   height: number
 ): number | null {
-  const neighbors = getNeighborIndices(generatorIndex, width, height);
-  const emptyNear = neighbors.filter(
-    (i) => !isBlockedCellType(grid[i].cellType) && grid[i].cellType === "empty" && grid[i].item === null
-  );
-  if (emptyNear.length > 0) {
-    return emptyNear[Math.floor(Math.random() * emptyNear.length)];
-  }
-  const allEmpty: number[] = [];
+  const len = width * height;
+  if (!Number.isInteger(generatorIndex) || generatorIndex < 0 || generatorIndex >= len) return null;
+
+  const gx = generatorIndex % width;
+  const gy = Math.floor(generatorIndex / width);
+
+  let bestRing = Number.POSITIVE_INFINITY;
+  const bestCells: number[] = [];
+
   for (let i = 0; i < grid.length; i++) {
-    if (!isBlockedCellType(grid[i].cellType) && grid[i].cellType === "empty" && grid[i].item === null) {
-      allEmpty.push(i);
+    const cell = grid[i];
+    if (!isSpawnableEmptyCell(cell)) continue;
+
+    const x = i % width;
+    const y = Math.floor(i / width);
+    const ring = Math.max(Math.abs(x - gx), Math.abs(y - gy));
+    if (ring < bestRing) {
+      bestRing = ring;
+      bestCells.length = 0;
+      bestCells.push(i);
+    } else if (ring === bestRing) {
+      bestCells.push(i);
     }
   }
-  if (allEmpty.length === 0) return null;
-  return allEmpty[Math.floor(Math.random() * allEmpty.length)];
+
+  if (bestCells.length === 0) return null;
+  return bestCells[Math.floor(Math.random() * bestCells.length)]!;
 }
