@@ -14,7 +14,7 @@ export interface GeneratorProgressDef {
   spawnsChainId: string;
   unlockCondition:
     | { type: "player_level"; value: number }
-    | { type: "orders_completed"; value: number }
+    | { type: "orders_completed"; value: number; minLevel?: number }
     | { type: "item_collected"; value: string };
   placementHint: GeneratorPlacementHint;
 }
@@ -24,12 +24,12 @@ export const GENERATOR_PROGRESSION_LIST: GeneratorProgressDef[] = (
   [
     ["gen_kitchen", "kitchen_meal", { type: "player_level" as const, value: 2 }, "top" as const],
     ["gen_bedroom", "bedroom_cozy", { type: "player_level" as const, value: 3 }, "left" as const],
-    ["gen_bathroom", "bathroom_fresh", { type: "orders_completed" as const, value: 8 }, "right" as const],
+    ["gen_bathroom", "bathroom_fresh", { type: "orders_completed" as const, value: 8, minLevel: 4 }, "right" as const],
     ["gen_terrace", "terrace_plants", { type: "player_level" as const, value: 5 }, "top" as const],
-    ["gen_office", "office_work", { type: "orders_completed" as const, value: 25 }, "center" as const],
+    ["gen_office", "office_work", { type: "orders_completed" as const, value: 25, minLevel: 8 }, "center" as const],
     ["gen_lounge", "lounge_drinks", { type: "player_level" as const, value: 7 }, "bottom" as const],
     ["gen_secret", "secret_mystic", { type: "player_level" as const, value: 10 }, "center" as const],
-    ["gen_garden", "garden_harvest", { type: "orders_completed" as const, value: 40 }, "bottom" as const],
+    ["gen_garden", "garden_harvest", { type: "orders_completed" as const, value: 40, minLevel: 12 }, "bottom" as const],
   ] as const
 ).map(([id, spawnsChainId, unlockCondition, placementHint]) => ({
   id,
@@ -44,7 +44,10 @@ function conditionMet(
 ): boolean {
   const u = def.unlockCondition;
   if (u.type === "player_level") return prog.level >= u.value;
-  if (u.type === "orders_completed") return prog.totalOrdersCompleted >= u.value;
+  if (u.type === "orders_completed") {
+    if (typeof u.minLevel === "number" && prog.level < u.minLevel) return false;
+    return prog.totalOrdersCompleted >= u.value;
+  }
   return Boolean(prog.collectedItems[u.value]);
 }
 
@@ -87,7 +90,7 @@ function candidateIndicesForChest(
   const fallback: number[] = [];
   for (let i = 0; i < grid.length; i++) {
     const c = grid[i];
-    if (c.cellType !== "box" && c.cellType !== "hint_box") continue;
+    if (c.cellType !== "box") continue;
     if (c.boxIsGenerator) continue;
     fallback.push(i);
     const col = i % width;
