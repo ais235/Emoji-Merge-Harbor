@@ -12,6 +12,29 @@ const SHOP_UPGRADES: Upgrade[] = META_COIN_UPGRADES.map((id) => UPGRADES.find((u
   (u): u is Upgrade => u != null
 );
 
+function effectLabel(u: Upgrade): string {
+  switch (u.effectType) {
+    case "energy_max":
+      return `+${u.effectValue} к макс. энергии`;
+    case "gen_extra_charges":
+      return `+${u.effectValue} заряд(а) генераторов`;
+    case "dirty_drop_chance":
+      return `+${Math.round(u.effectValue * 100)}% к луту из ящиков`;
+    case "free_spawn_chance":
+      return `+${Math.round(u.effectValue * 100)}% бесплатного спавна`;
+    default:
+      return u.description;
+  }
+}
+
+function groupLabel(u: Upgrade): string {
+  if (u.effectType === "energy_max") return "Энергия";
+  if (u.effectType === "gen_extra_charges") return "Заряды";
+  if (u.effectType === "dirty_drop_chance") return "Лут";
+  if (u.effectType === "free_spawn_chance") return "Бесплатный спавн";
+  return "Бонус";
+}
+
 export interface CoinShopModalProps {
   open: boolean;
   onClose: () => void;
@@ -81,8 +104,14 @@ export default function CoinShopModal({
                   <div className="mb-1 text-[13px] font-medium" style={{ color: "var(--c-browndark)" }}>
                     {u.name}
                   </div>
+                  <div className="mb-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold" style={{ borderColor: "var(--c-peach2)", color: "var(--c-brown)", background: "var(--c-peach)" }}>
+                    {groupLabel(u)}
+                  </div>
                   <p className="mb-2 text-[11px] font-medium leading-snug" style={{ color: "var(--c-brown)" }}>
                     {u.description}
+                  </p>
+                  <p className="mb-2 text-[11px] font-bold leading-snug" style={{ color: "var(--c-greendark)" }}>
+                    Эффект: {effectLabel(u)}
                   </p>
                   <div className="mb-2 flex items-center justify-between text-[12px]">
                     <span className="inline-flex items-center gap-1 font-medium" style={{ color: "var(--c-golddark)" }}>
