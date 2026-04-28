@@ -192,7 +192,8 @@ const META_UPGRADES: Upgrade[] = [
     requiredLevel: 1,
     effectType: "energy_max",
     effectValue: 5,
-    description: "Увеличивает верхний предел энергии на 5 (больше спавнов с генераторов за сессию).",
+    description:
+      "Поднимает только потолок энергии на +5 (при базе 30: было 30/30 → станет 35/35). Спавн с генератора по-прежнему тратит 1 энергию за нажатие.",
   },
   {
     id: "meta_gen_plus_charge_ii",
@@ -202,7 +203,7 @@ const META_UPGRADES: Upgrade[] = [
     requiredLevel: 5,
     effectType: "energy_max",
     effectValue: 10,
-    description: "Ещё +10 к максимальной энергии.",
+    description: "Ещё +10 к максимуму энергии (складывается с другими уровнями этого улучшения).",
   },
   {
     id: "meta_gen_plus_charge_iii",
@@ -212,7 +213,7 @@ const META_UPGRADES: Upgrade[] = [
     requiredLevel: 9,
     effectType: "energy_max",
     effectValue: 15,
-    description: "Ещё +15 к максимальной энергии.",
+    description: "Ещё +15 к максимуму энергии.",
   },
   {
     id: "meta_dirty_drop_bonus_i",
