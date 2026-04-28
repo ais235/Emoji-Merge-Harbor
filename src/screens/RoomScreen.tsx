@@ -28,6 +28,9 @@ export interface RoomScreenProps {
   progState: ProgressionState;
   onBack: () => void;
   onPurchaseUpgrade: (upgradeId: string) => void;
+  onWatchAdCoins: () => void;
+  adCoinsReward: number;
+  adCoinsCooldownMs: number;
   purchaseSparkleNonce: number;
   purchaseToast?: string | null;
 }
@@ -37,6 +40,9 @@ export default function RoomScreen({
   progState,
   onBack,
   onPurchaseUpgrade,
+  onWatchAdCoins,
+  adCoinsReward,
+  adCoinsCooldownMs,
   purchaseSparkleNonce,
   purchaseToast,
 }: RoomScreenProps) {
@@ -92,6 +98,11 @@ export default function RoomScreen({
 
   const displayLayers =
     roomEditorOpen && draftLayers ? draftLayers : (roomVisual?.layers ?? []);
+  const adCooldownSec = Math.ceil(adCoinsCooldownMs / 1000);
+  const adCooldownLabel =
+    adCooldownSec > 0
+      ? `${Math.floor(adCooldownSec / 60)}:${String(adCooldownSec % 60).padStart(2, "0")}`
+      : null;
 
   return (
     <div className="ds-screen ds-screen-hub ds-screen-fill-viewport flex min-h-0 flex-col overflow-hidden p-2">
@@ -116,6 +127,22 @@ export default function RoomScreen({
           {purchaseToast}
         </p>
       ) : null}
+
+      <section className="ds-card mb-2 p-3">
+        <div className="mb-2 text-[12px] font-medium" style={{ color: "var(--c-brown)" }}>
+          Реклама
+        </div>
+        <button
+          type="button"
+          onClick={onWatchAdCoins}
+          disabled={adCoinsCooldownMs > 0}
+          className={`w-full py-2.5 text-[12px] font-bold ${
+            adCoinsCooldownMs > 0 ? "ds-btn-secondary ds-btn-disabled" : "ds-btn-primary"
+          }`}
+        >
+          {adCooldownLabel ? `Доступно через ${adCooldownLabel}` : `Получить +${adCoinsReward} монет`}
+        </button>
+      </section>
 
       {totalLayers > 0 ? (
         <>

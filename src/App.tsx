@@ -96,11 +96,14 @@ import {
   playerTierOrderChainSliceCount,
 } from "./utils/sessionGridProgress";
 import {
+  COINS_AD_COOLDOWN_MS,
+  COINS_AD_REWARD,
   ENERGY_AD_REWARD,
   ENERGY_MAX_DEFAULT,
   ENERGY_ORDER_COMPLETE_BONUS,
   ENERGY_REGEN_INTERVAL_MS,
 } from "./gameBalance";
+import { AbstractAdService } from "./services/AbstractAdService";
 import {
   canGenerateMinigameOrder,
   incrementMinigameOrderComplete,
@@ -122,6 +125,7 @@ import {
 const SHOWN_BEATS_KEY = "shownBeats";
 const LAST_DAILY_BONUS_KEY = "lastDailyBonus";
 const DAILY_STREAK_KEY = "dailyStreak";
+const adService = new AbstractAdService();
 
 const GRID_WIDTH = 9;
 const GRID_HEIGHT = 12;
@@ -685,6 +689,8 @@ export default function App() {
   const currentScreenRef = useRef<AppScreen>("menu");
   const [coinShopOpen, setCoinShopOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lastCoinsAdAt, setLastCoinsAdAt] = useState(0);
+  const [roomAdTick, setRoomAdTick] = useState(0);
   /** Была успешная загрузка из STORAGE_KEY при старте приложения. */
   const [saveLoadedFromDisk, setSaveLoadedFromDisk] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
@@ -745,6 +751,46 @@ export default function App() {
     if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
     purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 2800);
   }, []);
+
+  useEffect(() => {
+    if (currentScreen !== "room") return;
+    const id = window.setInterval(() => setRoomAdTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [currentScreen]);
+
+  const coinsAdCooldownMs = useMemo(() => {
+    void roomAdTick;
+    if (lastCoinsAdAt <= 0) return 0;
+    return Math.max(0, COINS_AD_COOLDOWN_MS - (Date.now() - lastCoinsAdAt));
+  }, [lastCoinsAdAt, roomAdTick]);
+
+  const pushRoomToast = useCallback((message: string, ttlMs = 2800) => {
+    setRoomPurchaseToast(message);
+    if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
+    purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), ttlMs);
+  }, []);
+
+  const handleWatchAdCoins = useCallback(async () => {
+    if (coinsAdCooldownMs > 0) {
+      const seconds = Math.ceil(coinsAdCooldownMs / 1000);
+      const label = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+      pushRoomToast(`Реклама будет доступна через ${label}`);
+      return;
+    }
+    const shown = await adService.showRewarded(() => {
+      setProgState((ps) => {
+        if (!ps) return ps;
+        const m = new ProgressionManager(ps);
+        m.addCoins(COINS_AD_REWARD);
+        return m.getState();
+      });
+      setLastCoinsAdAt(Date.now());
+      pushRoomToast(`+${COINS_AD_REWARD} монет за просмотр рекламы`);
+    });
+    if (!shown) {
+      pushRoomToast("Реклама сейчас недоступна. Попробуйте чуть позже.");
+    }
+  }, [coinsAdCooldownMs, pushRoomToast]);
 
   /** Нет слияний, заказов, инструментов и выдачи с генератора. */
   useEffect(() => {
@@ -1842,6 +1888,9 @@ export default function App() {
               setCurrentScreen("hub");
             }}
             onPurchaseUpgrade={handlePurchaseUpgrade}
+            onWatchAdCoins={handleWatchAdCoins}
+            adCoinsReward={COINS_AD_REWARD}
+            adCoinsCooldownMs={coinsAdCooldownMs}
             purchaseSparkleNonce={purchaseSparkleNonce}
             purchaseToast={roomPurchaseToast}
           />
