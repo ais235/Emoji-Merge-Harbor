@@ -196,7 +196,7 @@ export const ENERGY_PICKUP_ITEM_ID = "energy_item";
 export const DIRTY_LOOT_RESOURCE_CHANCE = 0.28;
 
 /** Шанс генератора выдать ресурс вместо предмета 1 уровня. */
-export const GENERATOR_RESOURCE_DROP_CHANCE = 0.12;
+export const GENERATOR_RESOURCE_DROP_CHANCE = 0.07;
 
 /** Паутина-заглушка: цепочка ещё без генератора; `boxChainId` / `boxItemLevel` — заложенный лут. */
 export const COBWEB_UNKNOWN_ITEM_ID = "cobweb_unknown";
