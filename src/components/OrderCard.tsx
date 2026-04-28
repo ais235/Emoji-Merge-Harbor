@@ -15,6 +15,7 @@ import {
 } from "../types";
 
 export interface OrderCardProps {
+  orders: Order[];
   order: Order;
   grid: GridCell[];
   showCoinFly: boolean;
@@ -24,6 +25,7 @@ export interface OrderCardProps {
 }
 
 export function OrderCard({
+  orders,
   order,
   grid,
   showCoinFly,
@@ -31,7 +33,9 @@ export function OrderCard({
   onItemInfo,
   onDeliver,
 }: OrderCardProps) {
-  const allMet = orderAllRemainingSatisfiedFromGrid(grid, order);
+  const orderIndex = orders.findIndex((o) => o.instanceId === order.instanceId);
+  const allMet =
+    orderIndex >= 0 ? orderAllRemainingSatisfiedFromGrid(grid, orders, orderIndex) : false;
   const portraitSrc = resolveOrderCustomerAvatar(order);
   const [portraitBroken, setPortraitBroken] = useState(false);
 
@@ -39,7 +43,7 @@ export function OrderCard({
     setPortraitBroken(false);
   }, [order.instanceId, portraitSrc]);
 
-  const reqs = order.requirements.slice(0, 2);
+  const reqs = order.requirements;
 
   return (
     <div
@@ -119,18 +123,31 @@ export function OrderCard({
             borderColor: "#c4a870",
           }}
         >
-          {reqs.map((req) => {
+          {reqs.map((req, ri) => {
             const def = ALL_ITEMS[req.itemId];
-            const lineMet = orderReqLineSatisfiedOnGrid(grid, order, req);
+            const lineMet =
+              orderIndex >= 0
+                ? orderReqLineSatisfiedOnGrid(grid, orders, orderIndex, order, req)
+                : false;
+            const needCount = Math.max(1, req.count);
             return (
               <button
-                key={`${order.instanceId}-${req.itemId}`}
+                key={`${order.instanceId}-${ri}-${req.itemId}`}
                 type="button"
                 className="relative flex shrink-0 flex-col items-center justify-center border-0 bg-transparent p-0"
                 onClick={() => onItemInfo(req.itemId)}
                 title="Подсказка по предмету"
               >
                 <span className="order-card-tray-emoji block leading-none">{def?.emoji ?? "❓"}</span>
+                {needCount > 1 ? (
+                  <span
+                    className="absolute -right-0.5 -top-0.5 min-w-[14px] rounded border px-0.5 text-[8px] font-bold leading-none"
+                    style={{ background: "var(--c-cream)", borderColor: "var(--c-peach2)", color: "var(--c-brown)" }}
+                    aria-hidden
+                  >
+                    ×{needCount}
+                  </span>
+                ) : null}
                 {lineMet ? (
                   <span
                     className="absolute -bottom-0.5 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border-[1.5px] border-white text-[8px] font-black text-white"
