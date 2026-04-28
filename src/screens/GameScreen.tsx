@@ -426,7 +426,7 @@ function GameScreenContent({
               🏠
             </span>
             <span className="text-[11px] font-medium leading-snug" style={{ color: "var(--c-browndark)" }}>
-              Отремонтируйте комнату, чтобы получить ещё задания
+              Хватит монет на улучшение. Зайдите в Дом и купите его, чтобы открыть следующие заказы.
             </span>
             {nextRepairCost != null ? (
               <span className="inline-flex items-center gap-1 text-[11px] font-medium tabular-nums" style={{ color: "var(--c-golddark)" }}>
@@ -449,7 +449,7 @@ function GameScreenContent({
               }
               onClick={onOrdersExhaustedGoHome}
             >
-              {nextRepairCost != null && playerCoins >= nextRepairCost ? "Ремонтировать" : "В хаб"}
+              {nextRepairCost != null && playerCoins >= nextRepairCost ? "Купить улучшение" : "В хаб"}
             </button>
           </div>
         ) : (
@@ -589,6 +589,15 @@ function GameScreenContent({
                   {isBox ? (
                     <>
                       <div className={`pointer-events-none absolute inset-0 z-[1] rounded-[5px] ${isHintBox ? "cell-hint-box" : "cell-box"}`} aria-hidden />
+                      {isGeneratorChest ? (
+                        <span
+                          className="pointer-events-none absolute left-0.5 top-0.5 z-[3] text-[11px] leading-none drop-shadow-sm"
+                          title="Сундук с новым генератором"
+                          aria-hidden
+                        >
+                          ✨⚡
+                        </span>
+                      ) : null}
                       {isHintBox ? (
                         <span
                           className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center text-[9px] font-medium"

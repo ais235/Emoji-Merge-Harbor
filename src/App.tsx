@@ -282,6 +282,22 @@ function pickOrderComplexity(playerLevel: number): OrderComplexity {
   return roll < 0.2 ? "simple" : roll < 0.7 ? "medium" : "hard";
 }
 
+function nextAvailableVisualUpgrade(prog: Pick<ProgressionState, "level" | "purchasedUpgrades" | "unlockedZones">): {
+  id: string;
+  cost: number;
+  name: string;
+} | null {
+  const candidates = UPGRADES.filter((u) => {
+    if (u.effectType !== "visual") return false;
+    if (prog.purchasedUpgrades.includes(u.id)) return false;
+    if (prog.level < u.requiredLevel) return false;
+    if (u.zone !== "meta" && !prog.unlockedZones.includes(u.zone)) return false;
+    return true;
+  }).sort((a, b) => a.cost - b.cost || a.requiredLevel - b.requiredLevel);
+  const first = candidates[0];
+  return first ? { id: first.id, cost: first.cost, name: first.name } : null;
+}
+
 function buildRandomSessionOrder(
   level: number,
   maxSeenItemLevel: number,
@@ -693,6 +709,7 @@ export default function App() {
   const [soundOn, setSoundOn] = useState(true);
   const [screenEntering, setScreenEntering] = useState(false);
   const skipScreenTransitionRef = useRef(true);
+  const promptedUpgradeIdRef = useRef<string | null>(null);
 
   const triggerLevelUp = useCallback(() => {
     sounds.levelUp();
@@ -761,6 +778,22 @@ export default function App() {
     return Math.max(0, COINS_AD_COOLDOWN_MS - (Date.now() - lastCoinsAdAt));
   }, [lastCoinsAdAt, roomAdTick]);
 
+  const nextVisualUpgradeOffer = useMemo(
+    () =>
+      progState
+        ? nextAvailableVisualUpgrade({
+            level: progState.level,
+            purchasedUpgrades: progState.purchasedUpgrades,
+            unlockedZones: progState.unlockedZones,
+          })
+        : null,
+    [progState?.level, progState?.purchasedUpgrades, progState?.unlockedZones]
+  );
+
+  const shouldPromptUpgradePurchase = Boolean(
+    nextVisualUpgradeOffer && progState && progState.coins >= nextVisualUpgradeOffer.cost
+  );
+
   const pushRoomToast = useCallback((message: string, ttlMs = 2800) => {
     setRoomPurchaseToast(message);
     if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
@@ -819,6 +852,7 @@ export default function App() {
   /** После ремонта комнаты или редкого сбоя: снова заполнить слоты заказов, если лимит позволяет. */
   useEffect(() => {
     if (currentScreen !== "game" || !state || !progState) return;
+    if (shouldPromptUpgradePurchase) return;
     if (state.orders.length !== 0) return;
     setState((s) => {
       if (!s || s.orders.length !== 0) return s;
@@ -839,6 +873,27 @@ export default function App() {
     state?.orders.length,
     state?.playZone,
     progState?.level,
+    shouldPromptUpgradePurchase,
+  ]);
+
+  useEffect(() => {
+    if (!state || !progState) return;
+    if (!shouldPromptUpgradePurchase || !nextVisualUpgradeOffer) {
+      promptedUpgradeIdRef.current = null;
+      return;
+    }
+    if (promptedUpgradeIdRef.current === nextVisualUpgradeOffer.id) return;
+    promptedUpgradeIdRef.current = nextVisualUpgradeOffer.id;
+    setState((s) => (s ? { ...s, orders: [] } : s));
+    setRoomPurchaseToast(`Хватит монет на «${nextVisualUpgradeOffer.name}». Зайди в Дом и купи улучшение.`);
+    if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
+    purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 4200);
+  }, [
+    state?.orders.length,
+    progState?.coins,
+    shouldPromptUpgradePurchase,
+    nextVisualUpgradeOffer?.id,
+    nextVisualUpgradeOffer?.name,
   ]);
 
   useEffect(() => {
@@ -1925,10 +1980,10 @@ export default function App() {
           mergeBurstCellIndex={mergeBurstCellIndex}
           gridWidth={GRID_WIDTH}
           gridHeight={GRID_HEIGHT}
-          minigameOrdersCompletedAtRoom={0}
-          maxMinigameOrdersAtRoom={0}
-          ordersExhausted={false}
-          nextRepairCost={null}
+          minigameOrdersCompletedAtRoom={state.orders.length}
+          maxMinigameOrdersAtRoom={MAX_ACTIVE_ORDERS}
+          ordersExhausted={state.orders.length === 0 && shouldPromptUpgradePurchase}
+          nextRepairCost={nextVisualUpgradeOffer?.cost ?? null}
           playerCoins={progState.coins}
           onOrdersExhaustedGoHome={handleOrdersExhaustedGoHome}
           onSessionExitHome={handleSessionExitHome}
