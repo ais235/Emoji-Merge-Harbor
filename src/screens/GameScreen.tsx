@@ -382,7 +382,7 @@ function GameScreenContent({
     >
       <div
         ref={gameColumnRef}
-        className="relative box-border flex h-auto w-full max-w-[min(100%,var(--app-content-max))] flex-col rounded-t-[20px] bg-[var(--c-cream)] px-2 py-2 shadow-xl"
+        className="relative box-border flex h-auto w-full max-w-[min(100%,var(--app-content-max))] flex-col bg-[var(--c-cream)] px-2 py-2"
         style={scalingStyle}
       >
       <div className="relative z-[1] mb-1 w-full flex-shrink-0">

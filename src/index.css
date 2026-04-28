@@ -204,9 +204,9 @@ body {
     height: auto !important;
     min-height: 0 !important;
     max-height: none !important;
-    border-radius: 20px 20px 0 0;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.15);
-    overflow: hidden;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: visible;
   }
 
   /**
@@ -231,9 +231,9 @@ body {
 
   .ss-screen {
     background: var(--c-cream);
-    border-radius: 20px 20px 0 0;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.15);
-    overflow: hidden;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: visible;
   }
 
   .ss-bg {
