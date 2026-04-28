@@ -48,7 +48,7 @@ export default function CoinShopModal({
           style={{ borderColor: "var(--c-peach2)", background: "var(--c-peach)" }}
         >
           <h2 id="coin-shop-title" className="text-[13px] font-medium" style={{ color: "var(--c-browndark)" }}>
-            Улучшения за 🍪
+            Улучшения за 💰
           </h2>
           <button
             type="button"
@@ -86,7 +86,7 @@ export default function CoinShopModal({
                   </p>
                   <div className="mb-2 flex items-center justify-between text-[12px]">
                     <span className="font-medium" style={{ color: "var(--c-golddark)" }}>
-                      🍪 {u.cost}
+                      💰 {u.cost}
                     </span>
                     {owned ? (
                       <span className="font-medium" style={{ color: "var(--c-greendark)" }}>

@@ -373,7 +373,7 @@ export function findFirstCellIndexForOrderDelivery(grid: GridCell[], order: Orde
   return -1;
 }
 
-/** Короткая анимация «+N 🍪» у заказа или у клетки слияния (награда за очистку). */
+/** Короткая анимация «+N 💰» у заказа или у клетки слияния (награда за очистку). */
 export type CoinFlyState =
   | { source: "order"; orderId: string; amount: number }
   | { source: "clean"; cellIndex: number; amount: number };
@@ -615,7 +615,7 @@ export const ITEM_CHAINS: Record<string, ItemChain> = {
       {
         id: "s6",
         name: "Печенье",
-        emoji: "🍪",
+        emoji: "💰",
         level: 6,
         chain: "sweets",
         xpReward: 32,

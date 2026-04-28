@@ -150,7 +150,7 @@ export function OrderCard({
             className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-0.5 -translate-x-1/2 whitespace-nowrap text-[10px] font-semibold text-[#6B4400]"
             aria-hidden
           >
-            +{coinFlyAmount} 🍪
+            +{coinFlyAmount} 💰
           </span>
         ) : null}
       </div>

@@ -4,6 +4,7 @@
  */
 
 import React from "react";
+import { useUiScaling } from "../hooks/useUiScaling";
 import { Zap, Coins, Star } from "lucide-react";
 import { motion } from "motion/react";
 import type { ActiveZone } from "../types";
@@ -61,8 +62,14 @@ export default function CafeHubScreen({
       ? (HUB_ZONES.find((z) => z.id === repairNudgeZone)?.displayName ?? "комнату")
       : "";
 
+  const { containerRef, uiScale, scalingStyle } = useUiScaling();
+
   return (
-    <div className="ds-screen ds-screen-hub flex min-h-0 flex-col overflow-hidden">
+    <div
+      ref={containerRef}
+      className="ds-screen ds-screen-hub flex min-h-0 flex-col overflow-hidden"
+      style={scalingStyle}
+    >
       <header className="ds-topbar">
         <button type="button" onClick={onBackToMenu} className="ds-pill-home shrink-0">
           ← Меню
@@ -78,7 +85,7 @@ export default function CafeHubScreen({
               : false
           }
           transition={pulsePlayButton ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" } : undefined}
-          className="ds-btn-primary shrink-0 px-3 py-2 text-[11px]"
+          className="ds-btn-primary shrink-0 px-3 py-2 text-[12px]"
         >
           Играть
         </motion.button>
@@ -96,7 +103,7 @@ export default function CafeHubScreen({
             <div className="flex min-w-0 flex-1 flex-col items-center px-1">
               <div className="mb-0.5 flex items-center gap-0.5">
                 <Star className="h-2.5 w-2.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
-                <span className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
+                <span className="text-[11px] font-medium" style={{ color: "var(--c-brown)" }}>
                   Уровень {level}
                 </span>
               </div>

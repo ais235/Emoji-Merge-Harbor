@@ -1695,7 +1695,7 @@ export default function App() {
   if (!state || !progState) {
     return (
       <div
-        className="flex h-[100dvh] w-full flex-col items-center justify-center p-4 text-center"
+        className="app-desktop-bg-clear flex h-[100dvh] w-full flex-col items-center justify-center p-4 text-center"
         style={{ background: "var(--c-cream)", color: "var(--c-browndark)" }}
       >
         <div
@@ -1768,7 +1768,7 @@ export default function App() {
       )}
       {currentScreen === "hub" && (
         <div
-          className={`${screenEntering ? "screen-entering " : ""}flex min-h-0 h-[100dvh] max-h-[100dvh] flex-col overflow-hidden`}
+          className={`${screenEntering ? "screen-entering " : ""}flex min-h-0 h-[100dvh] max-h-[100dvh] w-full items-start justify-center overflow-hidden`}
         >
           <CafeHubScreen
             energy={state.energy}
@@ -1812,46 +1812,43 @@ export default function App() {
         </div>
       )}
       {currentScreen === "collection" ? (
-        <div className={screenEntering ? "screen-entering h-[100dvh]" : "h-[100dvh]"}>
+        <div className={`${screenEntering ? "screen-entering " : ""}flex h-[100dvh] w-full items-start justify-center`}>
           <CollectionScreen progState={progState} onBack={() => setCurrentScreen("hub")} />
         </div>
       ) : null}
       {currentScreen === "daily" ? (
-        <div className={screenEntering ? "screen-entering h-[100dvh]" : "h-[100dvh]"}>
+        <div className={`${screenEntering ? "screen-entering " : ""}flex h-[100dvh] w-full items-start justify-center`}>
           <DailyScreen
-          dailyQuests={dailyQuests}
-          streakDay={dailyBonusDay}
-          onBack={() => setCurrentScreen("hub")}
-          onClaimDailyBonus={handleClaimDaily}
-          onClaimDailyQuest={handleClaimDailyQuest}
-          onClaimWeekly={handleClaimWeekly}
-        />
+            dailyQuests={dailyQuests}
+            streakDay={dailyBonusDay}
+            onBack={() => setCurrentScreen("hub")}
+            onClaimDailyBonus={handleClaimDaily}
+            onClaimDailyQuest={handleClaimDailyQuest}
+            onClaimWeekly={handleClaimWeekly}
+          />
         </div>
       ) : null}
       {currentScreen === "room" && (
-        <div className={screenEntering ? "screen-entering h-[100dvh]" : "h-[100dvh]"}>
+        <div className={`${screenEntering ? "screen-entering " : ""}flex h-[100dvh] w-full items-start justify-center`}>
           <RoomScreen
-          activeZone={activeZone}
-          progState={progState}
-          onBack={() => {
-            setRoomPurchaseToast(null);
-            if (purchaseToastClearRef.current) {
-              window.clearTimeout(purchaseToastClearRef.current);
-              purchaseToastClearRef.current = null;
-            }
-            setCurrentScreen("hub");
-          }}
-          onPurchaseUpgrade={handlePurchaseUpgrade}
-          purchaseSparkleNonce={purchaseSparkleNonce}
-          purchaseToast={roomPurchaseToast}
-        />
+            activeZone={activeZone}
+            progState={progState}
+            onBack={() => {
+              setRoomPurchaseToast(null);
+              if (purchaseToastClearRef.current) {
+                window.clearTimeout(purchaseToastClearRef.current);
+                purchaseToastClearRef.current = null;
+              }
+              setCurrentScreen("hub");
+            }}
+            onPurchaseUpgrade={handlePurchaseUpgrade}
+            purchaseSparkleNonce={purchaseSparkleNonce}
+            purchaseToast={roomPurchaseToast}
+          />
         </div>
       )}
       {currentScreen === "game" && (
-        <div
-          className={`${screenEntering ? "screen-entering " : ""}scroll-touch-y flex min-h-[100dvh] flex-col overflow-y-auto`}
-        >
-          <GameScreen
+        <GameScreen
           state={state}
           progState={progState}
           showOrderCoinBonus={showOrderCoinBonus}
@@ -1873,12 +1870,6 @@ export default function App() {
           cellShakePair={cellShakePair}
           coinFly={coinFly}
           mergeBurstCellIndex={mergeBurstCellIndex}
-          soundOn={soundOn}
-          onToggleGameSound={() => {
-            const next = !soundOn;
-            setSoundMuted(!next);
-            setSoundOn(next);
-          }}
           gridWidth={GRID_WIDTH}
           gridHeight={GRID_HEIGHT}
           minigameOrdersCompletedAtRoom={minigameOrdersCompletedInRoom(progState, state.playZone)}
@@ -1896,7 +1887,6 @@ export default function App() {
           onNoMovesExitHome={handleNoMovesExitHome}
           onWatchAdEnergy={handleWatchAdEnergy}
         />
-        </div>
       )}
 
       {currentScreen === "hub" && currentBeat ? (

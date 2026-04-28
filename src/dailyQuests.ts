@@ -21,7 +21,7 @@ export type DailyQuestsState = {
 export const DAILY_QUESTS = [
   { id: "dq_orders", text: "Выполни 3 заказа", goal: 3, reward: 80, icon: "📦" },
   { id: "dq_merges", text: "Слей 10 предметов", goal: 10, reward: 60, icon: "✨" },
-  { id: "dq_coins", text: "Заработай 100 монет", goal: 100, reward: 50, icon: "🍪" },
+  { id: "dq_coins", text: "Заработай 100 монет", goal: 100, reward: 50, icon: "💰" },
 ] as const;
 
 export const WEEKLY_QUEST = {

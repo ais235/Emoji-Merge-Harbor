@@ -4,6 +4,7 @@
  */
 
 import React, { useEffect, useState } from "react";
+import { useUiScaling } from "../hooks/useUiScaling";
 import { Home } from "lucide-react";
 import { DAILY_REWARDS } from "../components/DailyBonusModal";
 import {
@@ -58,8 +59,14 @@ export default function DailyScreen({
   const nextClaimAt = lastTs && !Number.isNaN(lastTs) ? lastTs + 20 * 60 * 60 * 1000 : 0;
   const countdownMs = Math.max(0, nextClaimAt - nowTick);
 
+  const { containerRef, uiScale, scalingStyle } = useUiScaling();
+
   return (
-    <div className="ds-screen flex flex-col overflow-hidden">
+    <div
+      ref={containerRef}
+      className="ds-screen flex flex-col overflow-hidden"
+      style={scalingStyle}
+    >
       <header className="ds-topbar">
         <button type="button" onClick={onBack} className="ds-pill-home shrink-0 gap-1.5">
           <Home className="h-4 w-4 shrink-0" aria-hidden />
@@ -102,7 +109,7 @@ export default function DailyScreen({
           {eligible ? (
             <>
               <p className="mb-2 text-center text-[12px] font-medium" style={{ color: "var(--c-browndark)" }}>
-                Награда: 🍪 {rewardToday.coins} · ⚡ {rewardToday.energy}
+                Награда: 💰 {rewardToday.coins} · ⚡ {rewardToday.energy}
               </p>
               <button type="button" onClick={() => onClaimDailyBonus(rewardToday.coins, rewardToday.energy)} className="ds-btn-primary w-full">
                 Забрать бонус
@@ -138,7 +145,7 @@ export default function DailyScreen({
                           {task.text}
                         </div>
                         <div className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
-                          Награда: 🍪 {task.reward}
+                          Награда: 💰 {task.reward}
                         </div>
                       </div>
                     </div>
@@ -193,7 +200,7 @@ export default function DailyScreen({
                     {WEEKLY_QUEST.text}
                   </div>
                   <div className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
-                    Награда: 🍪 {WEEKLY_QUEST.reward}
+                    Награда: 💰 {WEEKLY_QUEST.reward}
                   </div>
                 </div>
               </div>

@@ -4,7 +4,9 @@
  */
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
+import { useUiScaling } from "../hooks/useUiScaling";
 import { CircleAlert, HelpCircle } from "lucide-react";
 import {
   ALL_ITEMS,
@@ -31,13 +33,13 @@ import { ENERGY_AD_REWARD } from "../gameBalance";
 const GRID_DRAG_THRESHOLD_PX = 12;
 
 /** px-0.5 у ряда сетки + рамка p-1 + border ~1px с каждой стороны (горизонтальный «хром» вокруг клеток) */
-const GRID_WRAP_CHROME_H_PX = 14;
+const GRID_WRAP_CHROME_PX = 14;
 /** Верхняя граница размера ячейки на очень широких портретах */
 const GRID_CELL_MAX_PX = 58;
 const GRID_GAP_PX = 2;
 
 function computeGridCellSize(columnContentWidth: number, gridW: number): number {
-  const usable = Math.max(120, columnContentWidth - GRID_WRAP_CHROME_H_PX);
+  const usable = Math.max(120, columnContentWidth - GRID_WRAP_CHROME_PX);
   const raw = Math.floor((usable - (gridW - 1) * GRID_GAP_PX) / gridW);
   return Math.max(24, Math.min(GRID_CELL_MAX_PX, raw));
 }
@@ -80,8 +82,6 @@ export interface GameScreenProps {
   coinFly: CoinFlyState | null;
   /** Ячейка слияния — частицы в portal */
   mergeBurstCellIndex?: number | null;
-  soundOn?: boolean;
-  onToggleGameSound?: () => void;
   gridWidth: number;
   gridHeight: number;
   /** Лимит заказов миниигры для текущей комнаты (ремонт в хабе). */
@@ -121,8 +121,6 @@ function GameScreenContent({
   cellShakePair,
   coinFly,
   mergeBurstCellIndex = null,
-  soundOn = true,
-  onToggleGameSound,
   gridWidth,
   gridHeight,
   minigameOrdersCompletedAtRoom,
@@ -140,23 +138,24 @@ function GameScreenContent({
   const [orderItemInfoId, setOrderItemInfoId] = useState<string | null>(null);
   const [roomOrderBarFlash, setRoomOrderBarFlash] = useState(false);
   const prevRoomOrderRatioRef = useRef<number>(0);
-  const gameColumnRef = useRef<HTMLDivElement>(null);
   const [cellSize, setCellSize] = useState(36);
+  const { containerRef: gameColumnRef, uiScale, scalingStyle } = useUiScaling();
 
+  // Вычисляем размер ячейки по ширине колонки
   useLayoutEffect(() => {
     const el = gameColumnRef.current;
     if (!el) return;
     const measure = () => {
       const cs = getComputedStyle(el);
       const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) || 16;
-      const inner = Math.max(0, el.clientWidth - padX);
-      setCellSize(computeGridCellSize(inner, gridWidth));
+      const innerW = Math.max(0, el.clientWidth - padX);
+      setCellSize(computeGridCellSize(innerW, gridWidth));
     };
     measure();
-    const ro = new ResizeObserver(() => measure());
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [gridWidth]);
+  }, [gridWidth, gameColumnRef]);
 
   const roomOrderRatio =
     maxMinigameOrdersAtRoom > 0 ? minigameOrdersCompletedAtRoom / maxMinigameOrdersAtRoom : 0;
@@ -379,12 +378,12 @@ function GameScreenContent({
 
   return (
     <div
-      className="flex w-full min-h-[100dvh] justify-center overflow-x-hidden font-sans select-none"
-      style={{ background: "var(--c-cream)" }}
+      className="app-desktop-bg-clear flex h-[100dvh] max-h-[100dvh] w-full items-start justify-center overflow-hidden font-sans select-none"
     >
       <div
         ref={gameColumnRef}
-        className="relative mx-auto box-border flex w-full max-w-[min(100%,var(--app-content-max))] flex-col px-2 py-2"
+        className="relative box-border flex h-auto w-full max-w-[min(100%,var(--app-content-max))] flex-col rounded-t-[20px] bg-[var(--c-cream)] px-2 py-2 shadow-xl"
+        style={scalingStyle}
       >
       <div className="relative z-[1] mb-1 w-full flex-shrink-0">
         {showOrderCoinBonus ? (
@@ -411,8 +410,6 @@ function GameScreenContent({
           ordersCompleted={minigameOrdersCompletedAtRoom}
           maxOrders={maxMinigameOrdersAtRoom}
           onGoHome={onGoHome}
-          soundOn={soundOn}
-          onToggleSound={onToggleGameSound}
         />
       </div>
 
@@ -430,7 +427,7 @@ function GameScreenContent({
             </span>
             {nextRepairCost != null ? (
               <span className="text-[11px] font-medium tabular-nums" style={{ color: "var(--c-golddark)" }}>
-                🍪 {nextRepairCost}
+                💰 {nextRepairCost}
               </span>
             ) : (
               <span className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
@@ -489,8 +486,9 @@ function GameScreenContent({
         onClose={() => setOrderItemInfoId(null)}
       />
 
-      {/* Поле: квадратные ячейки по ширине экрана, фиксированный размер сетки (страница скроллится при необходимости) */}
+      {/* Поле: квадратные ячейки по ширине. Всё поле масштабируется через uiScale */}
       <div className="flex w-full shrink-0 justify-center px-0.5 pb-1">
+        <div className="flex shrink-0 items-center justify-center">
         <div
           className="relative shrink-0 rounded-[12px] border p-1"
           style={{ borderColor: "var(--c-peach2)", background: "var(--c-peach)" }}
@@ -616,7 +614,7 @@ function GameScreenContent({
                       className="coin-fly pointer-events-none absolute bottom-full left-1/2 z-20 mb-0.5 -translate-x-1/2 whitespace-nowrap"
                       aria-hidden
                     >
-                      +{coinFly.amount} 🍪
+                      +{coinFly.amount} 💰
                     </span>
                   ) : null}
                   <div className="relative z-[5] flex items-center justify-center overflow-hidden">
@@ -696,20 +694,8 @@ function GameScreenContent({
               </span>
             </div>
           ) : null}
-          {dragGhost ? (
-            <div
-              aria-hidden
-              className="pointer-events-none fixed z-[80] text-xl sm:text-2xl"
-              style={{
-                left: dragGhost.x,
-                top: dragGhost.y,
-                transform: "translate(-50%, -50%)",
-              }}
-            >
-              {dragGhost.emoji}
-            </div>
-          ) : null}
         </div>
+      </div>
       </div>
 
       <div className="mt-1.5 flex w-full shrink-0 items-center justify-end gap-2 px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
@@ -781,6 +767,21 @@ function GameScreenContent({
       ) : null}
       <MergeBurstParticles cellIndex={mergeBurstCellIndex} />
       </div>
+      {dragGhost != null &&
+        createPortal(
+          <div
+            aria-hidden
+            className="pointer-events-none fixed z-[80] text-xl sm:text-2xl"
+            style={{
+              left: dragGhost.x,
+              top: dragGhost.y,
+              transform: "translate(-50%, -50%)",
+            }}
+          >
+            {dragGhost.emoji}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

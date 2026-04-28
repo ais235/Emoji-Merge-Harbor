@@ -94,7 +94,7 @@ export default function RoomScreen({
     roomEditorOpen && draftLayers ? draftLayers : (roomVisual?.layers ?? []);
 
   return (
-    <div className="ds-screen flex flex-col overflow-hidden p-2">
+    <div className="ds-screen ds-screen-hub ds-screen-fill-viewport flex min-h-0 flex-col overflow-hidden p-2">
       <header className="ds-topbar -mx-2 -mt-2 mb-2 rounded-none px-2">
         <button type="button" onClick={onBack} className="ds-pill-home shrink-0 gap-1.5">
           <Home className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
@@ -183,7 +183,7 @@ export default function RoomScreen({
         </div>
       )}
 
-      <div className="no-scrollbar scroll-touch-y flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-2">
+      <div className="scroll-touch-y flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-2">
         {purchasedHere.length > 0 ? (
           <section>
             <h2 className="mb-2 text-[11px] font-medium" style={{ color: "var(--c-muted)" }}>
@@ -224,16 +224,16 @@ export default function RoomScreen({
                 const canBuy = isUnlocked && canAfford && zoneUnlocked;
 
                 return (
-                  <li key={u.id} className="ds-card">
-                    <div className="mb-1 text-[13px] font-medium" style={{ color: "var(--c-browndark)" }}>
+                  <li key={u.id} className="ds-card p-4">
+                    <div className="mb-2 text-[15px] font-bold" style={{ color: "var(--c-browndark)" }}>
                       {u.name}
                     </div>
-                    <p className="mb-2 text-[11px] font-medium leading-snug" style={{ color: "var(--c-brown)" }}>
+                    <p className="mb-3 text-[13px] font-medium leading-relaxed" style={{ color: "var(--c-brown)" }}>
                       {u.description}
                     </p>
-                    <div className="mb-2 flex items-center gap-1 text-[12px] font-medium">
+                    <div className="mb-3 flex items-center gap-1.5 text-[14px] font-bold">
                       <span style={{ color: "var(--c-gold)" }} aria-hidden>
-                        🍪
+                        💰
                       </span>
                       <span style={{ color: "var(--c-golddark)" }}>{u.cost}</span>
                     </div>
@@ -241,7 +241,7 @@ export default function RoomScreen({
                       type="button"
                       disabled={!canBuy}
                       onClick={() => onPurchaseUpgrade(u.id)}
-                      className={`w-full ${canBuy ? "ds-btn-primary" : "ds-btn-secondary ds-btn-disabled"}`}
+                      className={`w-full py-3.5 text-[13px] font-bold ${canBuy ? "ds-btn-primary h-12" : "ds-btn-secondary ds-btn-disabled h-12"}`}
                     >
                       {!zoneUnlocked
                         ? `Нужна зона: ${u.zone}`
@@ -257,10 +257,6 @@ export default function RoomScreen({
         </section>
       </div>
 
-      <style>{`
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-      `}</style>
     </div>
   );
 }

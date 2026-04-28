@@ -6,8 +6,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { FurnitureLayer, RoomVisual } from "../story/roomData";
 
-const CANVAS_HEIGHT_PX = 220;
-
 /** Пути из `public/` (`/rooms/...`) с учётом `base` в vite.config */
 function publicAssetUrl(path: string): string {
   const trimmed = path.trim();
@@ -147,7 +145,9 @@ export default function RoomCanvas({
       ref={containerRef}
       className="room-canvas relative w-full overflow-hidden rounded-2xl"
       style={{
-        height: CANVAS_HEIGHT_PX,
+        aspectRatio: "4 / 3",
+        width: "100%",
+        maxHeight: "min(56vh, 420px)",
         backgroundColor: roomVisual.bgColor,
         touchAction: editor ? "none" : undefined,
       }}
@@ -156,7 +156,7 @@ export default function RoomCanvas({
         <img
           src={publicAssetUrl(roomVisual.bgImage)}
           alt=""
-          className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover"
+          className="pointer-events-none absolute inset-0 z-0 h-full w-full object-contain object-center"
           draggable={false}
           onError={() => setBgLoadFailed(true)}
         />
@@ -284,4 +284,3 @@ export default function RoomCanvas({
   );
 }
 
-export { CANVAS_HEIGHT_PX };

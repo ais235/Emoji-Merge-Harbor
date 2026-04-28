@@ -77,7 +77,7 @@ export default function DailyBonusModal({
           <p className="text-xs font-bold uppercase text-amber-800">Сегодня</p>
           <div className="mt-2 flex items-center justify-center gap-4 text-lg font-black text-gray-900">
             <span>
-              🍪 {reward.coins}
+              💰 {reward.coins}
             </span>
             <span>
               ⚡ {reward.energy}
