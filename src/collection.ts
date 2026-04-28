@@ -1,6 +1,28 @@
-import type { GridCell, ItemId, ProgressionState } from "./types";
+import type { GridCell, ItemChain, ItemId, ProgressionState } from "./types";
 import { ALL_ITEMS, ITEM_CHAINS } from "./types";
+import { HUB_ZONES } from "./progressionData";
+import { ZONE_TO_MERGE_CHAIN_ID } from "./roomMergeCatalog";
 import { computeMaxSeenMergeableLevelFromGrid } from "./utils/sessionGridProgress";
+
+/** Порядок секций коллекции — как список комнат на хабе «Дом», затем остальные цепочки (fruit, sweets, …). */
+export function collectionChainsInHubOrder(): ItemChain[] {
+  const seen = new Set<string>();
+  const ordered: ItemChain[] = [];
+  for (const zone of HUB_ZONES) {
+    const chainId = ZONE_TO_MERGE_CHAIN_ID[zone.id];
+    const ch = ITEM_CHAINS[chainId];
+    if (ch) {
+      ordered.push(ch);
+      seen.add(chainId);
+    }
+  }
+  for (const id of Object.keys(ITEM_CHAINS)) {
+    if (seen.has(id)) continue;
+    const ch = ITEM_CHAINS[id];
+    if (ch) ordered.push(ch);
+  }
+  return ordered;
+}
 
 /** Награда за полный сбор цепочки (из `ITEM_CHAINS`). Ориентир — порядок цен мебели в комнате. */
 export const CHAIN_COMPLETE_REWARDS: Record<string, { coins: number; energy: number }> = {

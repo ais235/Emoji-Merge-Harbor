@@ -7,13 +7,12 @@ import React from "react";
 import { useUiScaling } from "../hooks/useUiScaling";
 import { Coins, Home } from "lucide-react";
 import {
-  ITEM_CHAINS,
   itemIsGenerator,
   itemIsResourcePickup,
   type ItemDefinition,
   type ProgressionState,
 } from "../types";
-import { CHAIN_COMPLETE_REWARDS } from "../collection";
+import { CHAIN_COMPLETE_REWARDS, collectionChainsInHubOrder } from "../collection";
 
 export interface CollectionScreenProps {
   progState: ProgressionState;
@@ -21,7 +20,7 @@ export interface CollectionScreenProps {
 }
 
 export default function CollectionScreen({ progState, onBack }: CollectionScreenProps) {
-  const chains = Object.values(ITEM_CHAINS);
+  const chains = collectionChainsInHubOrder();
   const { containerRef, uiScale, scalingStyle } = useUiScaling();
 
   return (
