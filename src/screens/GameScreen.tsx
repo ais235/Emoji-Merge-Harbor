@@ -76,6 +76,8 @@ export interface GameScreenProps {
   mergePopIndex: number | null;
   /** Краткая подсветка соседних клеток после снятия препятствия */
   cellUnlockedFlashIndices?: number[];
+  /** Новые сундуки-генераторы: pop-анимация при появлении на поле. */
+  generatorChestAppearIndices?: number[];
   /** Усиленная вспышка (открытие ящика с генератором). */
   cellUnlockHeavyFlash?: boolean;
   cellShakePair: [number, number] | null;
@@ -117,6 +119,7 @@ function GameScreenContent({
   selectedCell,
   mergePopIndex,
   cellUnlockedFlashIndices = [],
+  generatorChestAppearIndices = [],
   cellUnlockHeavyFlash = false,
   cellShakePair,
   coinFly,
@@ -517,7 +520,9 @@ function GameScreenContent({
                 (cellShakePair[0] === index || cellShakePair[1] === index);
               const isDragSource = dragGhost?.from === index;
               const isUnlockFlash = cellUnlockedFlashIndices.includes(index);
+              const isGeneratorChestAppear = generatorChestAppearIndices.includes(index);
               const unlockFlashStrong = cellUnlockHeavyFlash && isUnlockFlash;
+              const isGeneratorChest = isBox && cell.boxIsGenerator;
               const canDragFrom = cellAllowsGridDragSource(cell);
               const isGen = Boolean(item && itemIsGenerator(item));
               const genBlocked = isGen && state.energy <= 0;
@@ -542,6 +547,8 @@ function GameScreenContent({
                       : `${isGen && genBlocked ? "cursor-not-allowed" : "cursor-pointer"} ${isSelected ? "cell-selected" : isGen ? (genBlocked ? "cell-is-generator cell-generator-depleted" : "cell-is-generator") : isResPickup ? (resIsCoins ? "cell-resource-coins" : "cell-resource-energy") : "ds-cell-open"}`,
                 mergePopIndex === index ? "cell-merge-pop" : "",
                 isUnlockFlash ? (unlockFlashStrong ? "cell-unlocked cell-unlocked-strong" : "cell-unlocked") : "",
+                isGeneratorChest ? "cell-generator-chest" : "",
+                isGeneratorChestAppear ? "cell-generator-chest-appear" : "",
                 isShaking ? "cell-shake" : "",
                 isDragSource ? "opacity-45" : "",
                 canDragFrom ? "touch-none select-none" : "",
@@ -561,7 +568,6 @@ function GameScreenContent({
                       : undefined
                   }
                   tabIndex={isBlocked || isCobweb ? -1 : 0}
-                  aria-disabled={isBlocked || isCobweb}
                   onPointerDown={(e) => handleGridCellPointerDown(e, index, cell)}
                   onClick={(e) => {
                     if (suppressClickRef.current) {

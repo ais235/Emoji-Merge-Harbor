@@ -105,12 +105,7 @@ import {
 } from "./gameBalance";
 import { AbstractAdService } from "./services/AbstractAdService";
 import {
-  canGenerateMinigameOrder,
-  incrementMinigameOrderComplete,
-  maxMinigameOrdersForZone,
-  minigameOrdersCompletedInRoom,
   resetMinigameOrdersForRoom,
-  nextVisualRepairOffer,
   upgradeZoneToActiveZone,
 } from "./utils/roomOrderLimit";
 import {
@@ -121,6 +116,7 @@ import {
   tryCompleteReconstructionItemsStage,
   tryDeliverReconstructionItem,
 } from "./reconstruction";
+import { syncGeneratorChestsForProgress } from "./utils/generatorProgression";
 
 const SHOWN_BEATS_KEY = "shownBeats";
 const LAST_DAILY_BONUS_KEY = "lastDailyBonus";
@@ -276,6 +272,16 @@ function mergeableItemsInChain(chain: ItemChain): MergeableItemDefinition[] {
   );
 }
 
+type OrderComplexity = "simple" | "medium" | "hard";
+
+function pickOrderComplexity(playerLevel: number): OrderComplexity {
+  const roll = Math.random();
+  if (playerLevel < 5) return roll < 0.75 ? "simple" : "medium";
+  if (playerLevel < 10) return roll < 0.55 ? "simple" : roll < 0.95 ? "medium" : "hard";
+  if (playerLevel < 15) return roll < 0.35 ? "simple" : roll < 0.85 ? "medium" : "hard";
+  return roll < 0.2 ? "simple" : roll < 0.7 ? "medium" : "hard";
+}
+
 function buildRandomSessionOrder(
   level: number,
   maxSeenItemLevel: number,
@@ -335,9 +341,16 @@ function buildRandomSessionOrder(
   }
 
   const poolShuffled = [...candidateIds].sort(() => Math.random() - 0.5);
+  const complexity = pickOrderComplexity(level);
   const requirements: OrderRequirement[] = [];
-  const firstPick = poolShuffled[0];
-  if (firstPick) requirements.push({ itemId: firstPick, count: 1 });
+  const desiredSlots = complexity === "simple" ? 1 : complexity === "medium" ? (Math.random() < 0.68 ? 1 : 2) : Math.random() < 0.6 ? 2 : 3;
+
+  for (const id of poolShuffled) {
+    if (requirements.length >= desiredSlots) break;
+    if (requirements.some((r) => r.itemId === id)) continue;
+    const count = complexity === "hard" ? (Math.random() < 0.45 ? 2 : 1) : complexity === "medium" ? (Math.random() < 0.22 ? 2 : 1) : 1;
+    requirements.push({ itemId: id, count });
+  }
 
   if (requirements.length === 0) {
     for (const ch of chainsBase) {
@@ -352,18 +365,6 @@ function buildRandomSessionOrder(
     }
   }
   if (requirements.length === 0) {
-    const ch = chainsBase[0]!;
-    const mergeables = mergeableItemsInChain(ch);
-    const poolStrict = mergeables.filter((x) => x.level >= allowedMinLevel && x.level <= allowedMaxLevel);
-    const pool =
-      poolStrict.length > 0
-        ? poolStrict
-        : mergeables.filter((x) => x.level <= allowedMaxLevel);
-    const pick =
-      pool.find((x) => x.level >= allowedMinLevel) ?? pool[pool.length - 1] ?? mergeables[0];
-    if (pick) requirements.push({ itemId: pick.id, count: 1 });
-  }
-  if (requirements.length === 0) {
     const mergeables = mergeableItemsInChain(ITEM_CHAINS.fruit);
     const pick =
       mergeables.find((x) => x.level >= allowedMinLevel && x.level <= allowedMaxLevel) ??
@@ -375,16 +376,11 @@ function buildRandomSessionOrder(
     requirements.push({ itemId: mergeableItemsInChain(ITEM_CHAINS.fruit)[0]?.id ?? "f1", count: 1 });
   }
 
-  const maxReqLevel = Math.max(
-    ...requirements.map((req) => {
-      const d = ALL_ITEMS[req.itemId];
-      return d && "level" in d ? d.level : 1;
-    })
-  );
-  const difficulty = maxReqLevel < 3 ? "simple" : maxReqLevel < 5 ? "medium" : "hard";
+  const difficulty = complexity;
   const base = EconomyManager.calculateOrderReward(difficulty);
   const totalUnits = requirements.reduce((s, q) => s + q.count, 0);
-  const mult = 1 + 0.25 * (totalUnits - 1) + 0.1 * (requirements.length - 1);
+  const complexityMult = difficulty === "simple" ? 1 : difficulty === "medium" ? 1.6 : 2.4;
+  const mult = complexityMult + 0.2 * (totalUnits - 1) + 0.1 * (requirements.length - 1);
   const rewardCoins = Math.round(base.coins * mult);
   const rewardXp = Math.round(base.xp * mult);
   const customerAvatar =
@@ -451,12 +447,11 @@ function createInitialOrders(
   grid: GridCell[],
   zone: ActiveZone,
   level: number,
-  maxSeenItemLevel: number,
-  orderLimitProg: Pick<ProgressionState, "minigameOrdersAtRoomRepair" | "purchasedUpgrades" | "level">
+  maxSeenItemLevel: number
 ): Order[] {
   const out: Order[] = [];
   let i = 0;
-  while (out.length < MAX_ACTIVE_ORDERS && canGenerateMinigameOrder(orderLimitProg, zone)) {
+  while (out.length < MAX_ACTIVE_ORDERS) {
     out.push(buildUniqueRandomOrder(out, level, maxSeenItemLevel, grid, zone, `o${i + 1}`));
     i += 1;
     if (i > 20) break;
@@ -621,8 +616,8 @@ function hydrateGameStateFromStorage(
       let o =
         rawO.length > 0
           ? rawO
-          : createInitialOrders(grid, inferredZone, defaultLevel, maxSeenItemLevel, limitProg);
-      while (o.length < MAX_ACTIVE_ORDERS && canGenerateMinigameOrder(limitProg, inferredZone)) {
+          : createInitialOrders(grid, inferredZone, defaultLevel, maxSeenItemLevel);
+      while (o.length < MAX_ACTIVE_ORDERS) {
         o.push(generateNewOrder(limitProg.level, maxSeenItemLevel, grid, inferredZone, o));
       }
       return o.slice(0, MAX_ACTIVE_ORDERS);
@@ -670,6 +665,8 @@ export default function App() {
   const [cellMergePopIndex, setCellMergePopIndex] = useState<number | null>(null);
   /** Индексы соседей, только что очищенных от препятствия после merge (краткая анимация). */
   const [cellUnlockedFlashIndices, setCellUnlockedFlashIndices] = useState<number[]>([]);
+  /** Новые сундуки-генераторы, появившиеся на поле по прогрессу (краткая анимация появления). */
+  const [generatorChestAppearIndices, setGeneratorChestAppearIndices] = useState<number[]>([]);
   /** Усиленная вспышка при открытии ящика с генератором. */
   const [cellUnlockHeavyFlash, setCellUnlockHeavyFlash] = useState(false);
   const [cellShakePair, setCellShakePair] = useState<[number, number] | null>(null);
@@ -804,20 +801,33 @@ export default function App() {
     );
   }, [state, progState, currentScreen]);
 
+  /** Единое поле: новые генераторы открываются как видимые сундуки при достижении прогресса. */
+  useEffect(() => {
+    if (!state || !progState) return;
+    const result = syncGeneratorChestsForProgress(state.grid, GRID_WIDTH, GRID_HEIGHT, progState);
+    if (result.addedIndices.length === 0) return;
+    setState((s) => (s ? { ...s, grid: result.grid } : s));
+    setGeneratorChestAppearIndices(result.addedIndices);
+    window.setTimeout(() => setGeneratorChestAppearIndices([]), 1200);
+    if (result.addedGeneratorIds.length > 0) {
+      setRoomPurchaseToast("✨ Новый сундук с генератором появился на поле!");
+      if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
+      purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 3200);
+    }
+  }, [state?.grid, progState?.level, progState?.totalOrdersCompleted, progState?.collectedItems]);
+
   /** После ремонта комнаты или редкого сбоя: снова заполнить слоты заказов, если лимит позволяет. */
   useEffect(() => {
     if (currentScreen !== "game" || !state || !progState) return;
     if (state.orders.length !== 0) return;
-    const pr = progStateRef.current;
-    if (!pr || !canGenerateMinigameOrder(pr, state.playZone)) return;
     setState((s) => {
       if (!s || s.orders.length !== 0) return s;
       const p = progStateRef.current;
-      if (!p || !canGenerateMinigameOrder(p, s.playZone)) return s;
+      if (!p) return s;
       const o: Order[] = [];
       const grid = s.grid;
       let guard = 0;
-      while (o.length < MAX_ACTIVE_ORDERS && canGenerateMinigameOrder(p, s.playZone) && guard < 12) {
+      while (o.length < MAX_ACTIVE_ORDERS && guard < 12) {
         guard += 1;
         const maxSeen = bumpMaxSeenItemLevelFromGrid(p, grid).maxSeenItemLevel;
         o.push(generateNewOrder(p.level, maxSeen, grid, s.playZone, o));
@@ -828,8 +838,6 @@ export default function App() {
     currentScreen,
     state?.orders.length,
     state?.playZone,
-    progState?.minigameOrdersAtRoomRepair,
-    progState?.purchasedUpgrades,
     progState?.level,
   ]);
 
@@ -864,7 +872,7 @@ export default function App() {
       energy: startEnergy,
       maxEnergy: startEnergy,
       lastEnergyRegenAt: Date.now(),
-      orders: createInitialOrders(startGrid, "hall", 1, 1, initialProgState),
+      orders: createInitialOrders(startGrid, "hall", 1, 1),
       isFirstLaunch: true,
       playZone: "hall",
       fieldProgress: startFieldProgress,
@@ -1342,13 +1350,11 @@ export default function App() {
         if (!orderIsFulfilled(finalized)) return prev;
 
         const newOrders = prev.orders.filter((_, i) => i !== orderIndex);
-        let afterCountProg = incrementMinigameOrderComplete(prog, prev.playZone);
+        const afterCountProg = { ...prog };
         const maxSeenForOrder = bumpMaxSeenItemLevelFromGrid(afterCountProg, gridAfterPickup).maxSeenItemLevel;
-        if (canGenerateMinigameOrder(afterCountProg, prev.playZone)) {
-          newOrders.push(
-            generateNewOrder(afterCountProg.level, maxSeenForOrder, gridAfterPickup, prev.playZone, newOrders)
-          );
-        }
+        newOrders.push(
+          generateNewOrder(afterCountProg.level, maxSeenForOrder, gridAfterPickup, prev.playZone, newOrders)
+        );
 
         const manager = new ProgressionManager(afterCountProg);
         const orderBonuses = manager.getActiveBonuses();
@@ -1555,7 +1561,7 @@ export default function App() {
         let orders = s.orders;
         if (refillGameOrders && azForRefill) {
           const o = [...s.orders];
-          while (o.length < MAX_ACTIVE_ORDERS && canGenerateMinigameOrder(nextProg, s.playZone)) {
+          while (o.length < MAX_ACTIVE_ORDERS) {
             const maxSeen = bumpMaxSeenItemLevelFromGrid(nextProg, s.grid).maxSeenItemLevel;
             o.push(generateNewOrder(nextProg.level, maxSeen, s.grid, s.playZone, o));
           }
@@ -1713,15 +1719,12 @@ export default function App() {
     setState((s) => {
       if (!s) return s;
       let next = { ...s };
-      if (next.playZone !== activeZone) {
-        next = { ...next, playZone: activeZone };
-      }
       if (state?.isFirstLaunch) {
         next = { ...next, isFirstLaunch: false };
       }
       return next;
     });
-  }, [activeZone, state?.isFirstLaunch]);
+  }, [state?.isFirstLaunch]);
 
   /** Тик раз в секунду для пересчёта ms до следующей энергии на экране игры — должен быть до early return (Rules of Hooks). */
   const [gameEnergyMsTick, setGameEnergyMsTick] = useState(0);
@@ -1915,20 +1918,17 @@ export default function App() {
           onOpenTutorial={() => setShowTutorial(true)}
           mergePopIndex={cellMergePopIndex}
           cellUnlockedFlashIndices={cellUnlockedFlashIndices}
+          generatorChestAppearIndices={generatorChestAppearIndices}
           cellUnlockHeavyFlash={cellUnlockHeavyFlash}
           cellShakePair={cellShakePair}
           coinFly={coinFly}
           mergeBurstCellIndex={mergeBurstCellIndex}
           gridWidth={GRID_WIDTH}
           gridHeight={GRID_HEIGHT}
-          minigameOrdersCompletedAtRoom={minigameOrdersCompletedInRoom(progState, state.playZone)}
-          maxMinigameOrdersAtRoom={maxMinigameOrdersForZone(state.playZone, progState.purchasedUpgrades)}
-          ordersExhausted={
-            state.orders.length === 0 && !canGenerateMinigameOrder(progState, state.playZone)
-          }
-          nextRepairCost={
-            nextVisualRepairOffer(state.playZone, progState.purchasedUpgrades)?.cost ?? null
-          }
+          minigameOrdersCompletedAtRoom={0}
+          maxMinigameOrdersAtRoom={0}
+          ordersExhausted={false}
+          nextRepairCost={null}
           playerCoins={progState.coins}
           onOrdersExhaustedGoHome={handleOrdersExhaustedGoHome}
           onSessionExitHome={handleSessionExitHome}

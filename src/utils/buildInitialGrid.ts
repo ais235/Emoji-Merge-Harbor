@@ -11,8 +11,7 @@ import {
   itemIsResourcePickup,
 } from "../types";
 import type { FieldProgressState } from "../types";
-import { boxGridCell, emptyGridCell, generatorBoxGridCell, generatorGridCell, hintBoxGridCell } from "./gridCells";
-import { hiddenSessionGeneratorIdsForZone } from "./sessionGridProgress";
+import { boxGridCell, emptyGridCell, generatorGridCell, hintBoxGridCell } from "./gridCells";
 import { buildAllUnlockQueues, FIELD_CONSTANTS, fieldZoneEntry, gridCenterIndex } from "./fieldZones";
 import { emptyFieldProgress } from "./mergeFieldProgress";
 
@@ -74,25 +73,6 @@ function manhattan(idx: number, centerIdx: number, width: number): number {
   const cc = centerIdx % width;
   const cr = Math.floor(centerIdx / width);
   return Math.abs(c - cc) + Math.abs(r - cr);
-}
-
-function pickGeneratorBoxIndex(
-  grid: GridCell[],
-  width: number,
-  height: number,
-  centerIdx: number,
-  targetDist: number,
-  exclude: Set<number>
-): number | null {
-  const candidates: number[] = [];
-  for (let i = 0; i < grid.length; i++) {
-    if (exclude.has(i)) continue;
-    const c = grid[i]!;
-    if (c.cellType !== "box" || c.boxIsGenerator) continue;
-    if (manhattan(i, centerIdx, width) === targetDist) candidates.push(i);
-  }
-  candidates.sort((a, b) => a - b);
-  return candidates[0] ?? null;
 }
 
 function maxManhattanPresentInZone(
@@ -180,42 +160,6 @@ export function buildInitialGrid(width: number, height: number, zone: ActiveZone
         grid.push(assignBoxCell(m, orderedChains));
       }
     }
-  }
-
-  const hiddenGens = hiddenSessionGeneratorIdsForZone(zone);
-  const exclude = new Set<number>();
-  let firstGeneratorBoxIndex: number | null = null;
-
-  if (hiddenGens[0]) {
-    const idx =
-      pickGeneratorBoxIndex(grid, width, height, centerIdx, FIELD_CONSTANTS.GENERATOR_BOX_DIST_ZONE2, exclude) ??
-      pickGeneratorBoxIndex(grid, width, height, centerIdx, 5, exclude) ??
-      pickGeneratorBoxIndex(grid, width, height, centerIdx, 6, exclude);
-    if (idx != null) {
-      grid[idx] = generatorBoxGridCell(hiddenGens[0]!);
-      exclude.add(idx);
-      firstGeneratorBoxIndex = idx;
-    }
-  }
-
-  if (hiddenGens[1]) {
-    let idx =
-      pickGeneratorBoxIndex(grid, width, height, centerIdx, FIELD_CONSTANTS.GENERATOR_BOX_DIST_ZONE3, exclude) ??
-      pickGeneratorBoxIndex(grid, width, height, centerIdx, 7, exclude) ??
-      pickGeneratorBoxIndex(grid, width, height, centerIdx, 8, exclude);
-    if (idx == null || idx === firstGeneratorBoxIndex) {
-      const wide: number[] = [];
-      for (let i = 0; i < grid.length; i++) {
-        if (exclude.has(i)) continue;
-        const c = grid[i]!;
-        if (c.cellType !== "box" || c.boxIsGenerator) continue;
-        const d = manhattan(i, centerIdx, width);
-        if (d >= 7) wide.push(i);
-      }
-      wide.sort((a, b) => a - b);
-      idx = wide.find((i) => i !== firstGeneratorBoxIndex) ?? null;
-    }
-    if (idx != null) grid[idx] = generatorBoxGridCell(hiddenGens[1]!);
   }
 
   applyHintBoxes(grid, width, height, centerIdx);

@@ -1,10 +1,11 @@
 /**
- * Разблокировка генераторов по прогрессу и пометка клеток тумана `pendingGenerator`.
+ * Прогрессия генераторов на едином поле:
+ * когда условие достигнуто, на поле появляется видимый "сундук-генератор".
  */
 
 import type { GridCell, ProgressionState } from "../types";
 import { ROOM_GENERATOR_DEFS } from "../roomMergeCatalog";
-import { chainsFromGridGenerators } from "../types";
+import { generatorBoxGridCell } from "./gridCells";
 
 export type GeneratorPlacementHint = "center" | "top" | "bottom" | "left" | "right";
 
@@ -51,7 +52,9 @@ function collectPlacedGeneratorIds(grid: GridCell[]): Set<string> {
   const s = new Set<string>();
   for (const c of grid) {
     if (c.cellType === "generator" && c.item) s.add(c.item);
-    if (c.cellType === "fog" && c.pendingGenerator) s.add(c.pendingGenerator);
+    if ((c.cellType === "box" || c.cellType === "hint_box") && c.boxIsGenerator && c.boxGeneratorId) {
+      s.add(c.boxGeneratorId);
+    }
   }
   return s;
 }
@@ -74,59 +77,56 @@ function hintMatches(hint: GeneratorPlacementHint, c: number, r: number, w: numb
   }
 }
 
-/** Случайная fog-клетка в зоне подсказки с меткой pendingGenerator. */
-export function placeGeneratorInFog(
+function candidateIndicesForChest(
   grid: GridCell[],
   width: number,
   height: number,
-  generatorId: string,
   hint: GeneratorPlacementHint
-): GridCell[] {
-  const pool: number[] = [];
+): number[] {
+  const preferred: number[] = [];
+  const fallback: number[] = [];
   for (let i = 0; i < grid.length; i++) {
-    if (grid[i].cellType !== "fog" || grid[i].pendingGenerator) continue;
-    const c = i % width;
-    const r = Math.floor(i / width);
-    if (!hintMatches(hint, c, r, width, height)) continue;
-    pool.push(i);
+    const c = grid[i];
+    if (c.cellType !== "box" && c.cellType !== "hint_box") continue;
+    if (c.boxIsGenerator) continue;
+    fallback.push(i);
+    const col = i % width;
+    const row = Math.floor(i / width);
+    if (hintMatches(hint, col, row, width, height)) preferred.push(i);
   }
-  const wide = pool.length > 0 ? pool : grid.map((c, i) => (c.cellType === "fog" && !c.pendingGenerator ? i : -1)).filter((i) => i >= 0);
-  if (wide.length === 0) return grid;
-  const pick = wide[Math.floor(Math.random() * wide.length)]!;
-  const next = grid.map((cell) => ({ ...cell }));
-  next[pick] = { ...next[pick], pendingGenerator: generatorId };
-  return next;
+  preferred.sort((a, b) => a - b);
+  fallback.sort((a, b) => a - b);
+  return preferred.length > 0 ? preferred : fallback;
 }
 
-/** Проверить разблокировки и пометить туман (без UI). */
-export function checkGeneratorUnlocks(
+/**
+ * Проверить условия и добавить новые сундуки-генераторы на поле.
+ * Возвращает индексы новых сундуков для красивой анимации появления.
+ */
+export function syncGeneratorChestsForProgress(
   grid: GridCell[],
   width: number,
   height: number,
   prog: Pick<ProgressionState, "level" | "totalOrdersCompleted" | "collectedItems">
-): { grid: GridCell[]; newlyUnlocked: string[] } {
+): { grid: GridCell[]; addedGeneratorIds: string[]; addedIndices: number[] } {
   const placed = collectPlacedGeneratorIds(grid);
-  let next = grid.map((c) => ({ ...c }));
-  const newlyUnlocked: string[] = [];
+  const next = grid.map((c) => ({ ...c }));
+  const addedGeneratorIds: string[] = [];
+  const addedIndices: number[] = [];
 
   for (const def of GENERATOR_PROGRESSION_LIST) {
     if (!ROOM_GENERATOR_DEFS[def.id]) continue;
     if (placed.has(def.id)) continue;
     if (!conditionMet(def, prog)) continue;
-    const before = next.some((c) => c.pendingGenerator === def.id);
-    next = placeGeneratorInFog(next, width, height, def.id, def.placementHint);
-    const after = next.some((c) => c.pendingGenerator === def.id);
-    if (after && !before) {
-      newlyUnlocked.push(def.id);
-      placed.add(def.id);
-    }
+
+    const candidates = candidateIndicesForChest(next, width, height, def.placementHint);
+    const pick = candidates[0];
+    if (pick == null) continue;
+    next[pick] = generatorBoxGridCell(def.id);
+    placed.add(def.id);
+    addedGeneratorIds.push(def.id);
+    addedIndices.push(pick);
   }
 
-  return { grid: next, newlyUnlocked };
-}
-
-export function getActiveChainIds(grid: GridCell[]): string[] {
-  const chains = chainsFromGridGenerators(grid);
-  const ids = chains.map((c) => c.id);
-  return [...new Set(ids)];
+  return { grid: next, addedGeneratorIds, addedIndices };
 }
