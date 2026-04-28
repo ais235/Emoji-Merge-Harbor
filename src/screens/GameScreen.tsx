@@ -102,6 +102,8 @@ export interface GameScreenProps {
   onNoMovesExitHome: () => void;
   /** Заглушка рекламы: +энергия (в проде — SDK). */
   onWatchAdEnergy: () => void;
+  /** Редкие подсказки от Лены (покупка/новая комната). */
+  lenaHint: { id: number; text: string } | null;
 }
 
 function GameScreenContent({
@@ -136,6 +138,7 @@ function GameScreenContent({
   isNoMoves,
   onNoMovesExitHome,
   onWatchAdEnergy,
+  lenaHint,
 }: GameScreenProps) {
   const [selectionInfoOpen, setSelectionInfoOpen] = useState(false);
   const [orderItemInfoId, setOrderItemInfoId] = useState<string | null>(null);
@@ -221,6 +224,19 @@ function GameScreenContent({
       });
     }
   }, [coinFly, showPanel]);
+
+  const lastLenaHintIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!lenaHint) return;
+    if (lastLenaHintIdRef.current === lenaHint.id) return;
+    lastLenaHintIdRef.current = lenaHint.id;
+    showPanel({
+      npc: "lena",
+      emotion: "happy",
+      text: lenaHint.text,
+      duration: 5000,
+    });
+  }, [lenaHint, showPanel]);
 
   useEffect(() => {
     if (!isNoMoves) {

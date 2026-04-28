@@ -105,7 +105,6 @@ import {
 } from "./gameBalance";
 import { AbstractAdService } from "./services/AbstractAdService";
 import {
-  resetMinigameOrdersForRoom,
   upgradeZoneToActiveZone,
 } from "./utils/roomOrderLimit";
 import {
@@ -121,7 +120,10 @@ import { syncGeneratorChestsForProgress } from "./utils/generatorProgression";
 const SHOWN_BEATS_KEY = "shownBeats";
 const LAST_DAILY_BONUS_KEY = "lastDailyBonus";
 const DAILY_STREAK_KEY = "dailyStreak";
+const SHOWN_UPGRADE_HINTS_KEY = "shownUpgradeHints";
+const SHOWN_ROOM_HINTS_KEY = "shownRoomHints";
 const adService = new AbstractAdService();
+const ORDER_COUNTER_ZONE: ActiveZone = "hall";
 
 const GRID_WIDTH = 9;
 const GRID_HEIGHT = 12;
@@ -298,6 +300,42 @@ function nextAvailableVisualUpgrade(prog: Pick<ProgressionState, "level" | "purc
   return first ? { id: first.id, cost: first.cost, name: first.name } : null;
 }
 
+function globalOrderCounter(prog: Pick<ProgressionState, "minigameOrdersAtRoomRepair">): number {
+  const v = prog.minigameOrdersAtRoomRepair?.[ORDER_COUNTER_ZONE];
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0;
+}
+
+function maxOrdersBeforeShopPrompt(level: number): number {
+  return Math.max(8, Math.min(18, 8 + Math.floor(level / 2)));
+}
+
+function canGenerateOrdersBeforeShopPrompt(
+  prog: Pick<ProgressionState, "minigameOrdersAtRoomRepair" | "level">
+): boolean {
+  return globalOrderCounter(prog) < maxOrdersBeforeShopPrompt(prog.level);
+}
+
+function withIncrementOrderCounter(prog: ProgressionState): ProgressionState {
+  const prev = globalOrderCounter(prog);
+  return {
+    ...prog,
+    minigameOrdersAtRoomRepair: {
+      ...(prog.minigameOrdersAtRoomRepair ?? {}),
+      [ORDER_COUNTER_ZONE]: prev + 1,
+    },
+  };
+}
+
+function withResetOrderCounter(prog: ProgressionState): ProgressionState {
+  return {
+    ...prog,
+    minigameOrdersAtRoomRepair: {
+      ...(prog.minigameOrdersAtRoomRepair ?? {}),
+      [ORDER_COUNTER_ZONE]: 0,
+    },
+  };
+}
+
 function buildRandomSessionOrder(
   level: number,
   maxSeenItemLevel: number,
@@ -463,11 +501,12 @@ function createInitialOrders(
   grid: GridCell[],
   zone: ActiveZone,
   level: number,
-  maxSeenItemLevel: number
+  maxSeenItemLevel: number,
+  orderProg: Pick<ProgressionState, "minigameOrdersAtRoomRepair" | "level">
 ): Order[] {
   const out: Order[] = [];
   let i = 0;
-  while (out.length < MAX_ACTIVE_ORDERS) {
+  while (out.length < MAX_ACTIVE_ORDERS && canGenerateOrdersBeforeShopPrompt(orderProg)) {
     out.push(buildUniqueRandomOrder(out, level, maxSeenItemLevel, grid, zone, `o${i + 1}`));
     i += 1;
     if (i > 20) break;
@@ -632,7 +671,7 @@ function hydrateGameStateFromStorage(
       let o =
         rawO.length > 0
           ? rawO
-          : createInitialOrders(grid, inferredZone, defaultLevel, maxSeenItemLevel);
+          : createInitialOrders(grid, inferredZone, defaultLevel, maxSeenItemLevel, limitProg);
       while (o.length < MAX_ACTIVE_ORDERS) {
         o.push(generateNewOrder(limitProg.level, maxSeenItemLevel, grid, inferredZone, o));
       }
@@ -709,7 +748,30 @@ export default function App() {
   const [soundOn, setSoundOn] = useState(true);
   const [screenEntering, setScreenEntering] = useState(false);
   const skipScreenTransitionRef = useRef(true);
-  const promptedUpgradeIdRef = useRef<string | null>(null);
+  const [lenaHint, setLenaHint] = useState<{ id: number; text: string } | null>(null);
+  const [shownUpgradeHints, setShownUpgradeHints] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(SHOWN_UPGRADE_HINTS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  const [shownRoomHints, setShownRoomHints] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(SHOWN_ROOM_HINTS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  const lastLenaHintAtRef = useRef(0);
+  const affordEdgeUpgradeIdRef = useRef<string | null>(null);
+  const prevUnlockedZonesRef = useRef<string[] | null>(null);
 
   const triggerLevelUp = useCallback(() => {
     sounds.levelUp();
@@ -790,9 +852,21 @@ export default function App() {
     [progState?.level, progState?.purchasedUpgrades, progState?.unlockedZones]
   );
 
-  const shouldPromptUpgradePurchase = Boolean(
-    nextVisualUpgradeOffer && progState && progState.coins >= nextVisualUpgradeOffer.cost
-  );
+  useEffect(() => {
+    try {
+      localStorage.setItem(SHOWN_UPGRADE_HINTS_KEY, JSON.stringify(shownUpgradeHints));
+    } catch {
+      /* ignore */
+    }
+  }, [shownUpgradeHints]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SHOWN_ROOM_HINTS_KEY, JSON.stringify(shownRoomHints));
+    } catch {
+      /* ignore */
+    }
+  }, [shownRoomHints]);
 
   const pushRoomToast = useCallback((message: string, ttlMs = 2800) => {
     setRoomPurchaseToast(message);
@@ -849,15 +923,63 @@ export default function App() {
     }
   }, [state?.grid, progState?.level, progState?.totalOrdersCompleted, progState?.collectedItems]);
 
+  useEffect(() => {
+    if (!progState || currentScreen !== "game" || !nextVisualUpgradeOffer) {
+      affordEdgeUpgradeIdRef.current = null;
+      return;
+    }
+    const canAfford = progState.coins >= nextVisualUpgradeOffer.cost;
+    if (!canAfford) {
+      if (affordEdgeUpgradeIdRef.current === nextVisualUpgradeOffer.id) {
+        affordEdgeUpgradeIdRef.current = null;
+      }
+      return;
+    }
+    if (affordEdgeUpgradeIdRef.current === nextVisualUpgradeOffer.id) return;
+    affordEdgeUpgradeIdRef.current = nextVisualUpgradeOffer.id;
+    if (shownUpgradeHints.includes(nextVisualUpgradeOffer.id)) return;
+    const now = Date.now();
+    if (now - lastLenaHintAtRef.current < 120000) return;
+    if (Math.random() > 0.45) return;
+    setShownUpgradeHints((prev) => [...prev, nextVisualUpgradeOffer.id]);
+    lastLenaHintAtRef.current = now;
+    setLenaHint({ id: now, text: `Теперь мы можем купить «${nextVisualUpgradeOffer.name}» в Доме.` });
+  }, [
+    currentScreen,
+    progState?.coins,
+    nextVisualUpgradeOffer?.id,
+    nextVisualUpgradeOffer?.cost,
+    nextVisualUpgradeOffer?.name,
+    shownUpgradeHints,
+  ]);
+
+  useEffect(() => {
+    if (!progState) return;
+    if (prevUnlockedZonesRef.current === null) {
+      prevUnlockedZonesRef.current = [...progState.unlockedZones];
+      return;
+    }
+    const prev = new Set(prevUnlockedZonesRef.current);
+    const fresh = progState.unlockedZones.filter((z) => !prev.has(z));
+    prevUnlockedZonesRef.current = [...progState.unlockedZones];
+    const nextZone = fresh.find((z) => !shownRoomHints.includes(z));
+    if (!nextZone) return;
+    const zoneName = HUB_ZONES.find((z) => progressZoneId(z.id) === nextZone)?.displayName ?? "новая комната";
+    setShownRoomHints((prevHints) => [...prevHints, nextZone]);
+    const now = Date.now();
+    lastLenaHintAtRef.current = now;
+    setLenaHint({ id: now, text: `Открылась «${zoneName}». Заглянем в Дом и посмотрим!` });
+  }, [progState?.unlockedZones, shownRoomHints]);
+
   /** После ремонта комнаты или редкого сбоя: снова заполнить слоты заказов, если лимит позволяет. */
   useEffect(() => {
     if (currentScreen !== "game" || !state || !progState) return;
-    if (shouldPromptUpgradePurchase) return;
     if (state.orders.length !== 0) return;
+    if (!canGenerateOrdersBeforeShopPrompt(progState)) return;
     setState((s) => {
       if (!s || s.orders.length !== 0) return s;
       const p = progStateRef.current;
-      if (!p) return s;
+      if (!p || !canGenerateOrdersBeforeShopPrompt(p)) return s;
       const o: Order[] = [];
       const grid = s.grid;
       let guard = 0;
@@ -873,27 +995,7 @@ export default function App() {
     state?.orders.length,
     state?.playZone,
     progState?.level,
-    shouldPromptUpgradePurchase,
-  ]);
-
-  useEffect(() => {
-    if (!state || !progState) return;
-    if (!shouldPromptUpgradePurchase || !nextVisualUpgradeOffer) {
-      promptedUpgradeIdRef.current = null;
-      return;
-    }
-    if (promptedUpgradeIdRef.current === nextVisualUpgradeOffer.id) return;
-    promptedUpgradeIdRef.current = nextVisualUpgradeOffer.id;
-    setState((s) => (s ? { ...s, orders: [] } : s));
-    setRoomPurchaseToast(`Хватит монет на «${nextVisualUpgradeOffer.name}». Зайди в Дом и купи улучшение.`);
-    if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
-    purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 4200);
-  }, [
-    state?.orders.length,
-    progState?.coins,
-    shouldPromptUpgradePurchase,
-    nextVisualUpgradeOffer?.id,
-    nextVisualUpgradeOffer?.name,
+    progState?.minigameOrdersAtRoomRepair,
   ]);
 
   useEffect(() => {
@@ -927,7 +1029,7 @@ export default function App() {
       energy: startEnergy,
       maxEnergy: startEnergy,
       lastEnergyRegenAt: Date.now(),
-      orders: createInitialOrders(startGrid, "hall", 1, 1),
+      orders: createInitialOrders(startGrid, "hall", 1, 1, initialProgState),
       isFirstLaunch: true,
       playZone: "hall",
       fieldProgress: startFieldProgress,
@@ -1405,11 +1507,13 @@ export default function App() {
         if (!orderIsFulfilled(finalized)) return prev;
 
         const newOrders = prev.orders.filter((_, i) => i !== orderIndex);
-        const afterCountProg = { ...prog };
+        const afterCountProg = withIncrementOrderCounter(prog);
         const maxSeenForOrder = bumpMaxSeenItemLevelFromGrid(afterCountProg, gridAfterPickup).maxSeenItemLevel;
-        newOrders.push(
-          generateNewOrder(afterCountProg.level, maxSeenForOrder, gridAfterPickup, prev.playZone, newOrders)
-        );
+        if (canGenerateOrdersBeforeShopPrompt(afterCountProg)) {
+          newOrders.push(
+            generateNewOrder(afterCountProg.level, maxSeenForOrder, gridAfterPickup, prev.playZone, newOrders)
+          );
+        }
 
         const manager = new ProgressionManager(afterCountProg);
         const orderBonuses = manager.getActiveBonuses();
@@ -1602,19 +1706,15 @@ export default function App() {
       const u = UPGRADES.find((x) => x.id === upgradeId);
       let nextProg = newProg;
       if (u && u.effectType === "visual") {
-        const az = upgradeZoneToActiveZone(u.zone);
-        if (az) nextProg = resetMinigameOrdersForRoom(nextProg, az);
+        nextProg = withResetOrderCounter(nextProg);
       }
       const bonuses = new ProgressionManager(nextProg).getActiveBonuses();
-      const azForRefill =
-        u && u.effectType === "visual" ? upgradeZoneToActiveZone(u.zone) : null;
-      const refillGameOrders =
-        Boolean(azForRefill && state.playZone === azForRefill && currentScreenRef.current === "game");
+      const refillGameOrders = Boolean(u && u.effectType === "visual" && currentScreenRef.current === "game");
       setProgState(nextProg);
       setState((s) => {
         if (!s) return s;
         let orders = s.orders;
-        if (refillGameOrders && azForRefill) {
+        if (refillGameOrders) {
           const o = [...s.orders];
           while (o.length < MAX_ACTIVE_ORDERS) {
             const maxSeen = bumpMaxSeenItemLevelFromGrid(nextProg, s.grid).maxSeenItemLevel;
@@ -1980,9 +2080,9 @@ export default function App() {
           mergeBurstCellIndex={mergeBurstCellIndex}
           gridWidth={GRID_WIDTH}
           gridHeight={GRID_HEIGHT}
-          minigameOrdersCompletedAtRoom={state.orders.length}
-          maxMinigameOrdersAtRoom={MAX_ACTIVE_ORDERS}
-          ordersExhausted={state.orders.length === 0 && shouldPromptUpgradePurchase}
+          minigameOrdersCompletedAtRoom={globalOrderCounter(progState)}
+          maxMinigameOrdersAtRoom={maxOrdersBeforeShopPrompt(progState.level)}
+          ordersExhausted={state.orders.length === 0 && !canGenerateOrdersBeforeShopPrompt(progState)}
           nextRepairCost={nextVisualUpgradeOffer?.cost ?? null}
           playerCoins={progState.coins}
           onOrdersExhaustedGoHome={handleOrdersExhaustedGoHome}
@@ -1990,6 +2090,7 @@ export default function App() {
           isNoMoves={isNoMoves}
           onNoMovesExitHome={handleNoMovesExitHome}
           onWatchAdEnergy={handleWatchAdEnergy}
+          lenaHint={lenaHint}
         />
       )}
 
