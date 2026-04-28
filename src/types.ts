@@ -71,7 +71,7 @@ export function isCobwebUnknownPlaceholder(cell: GridCell): boolean {
   return cell.cellType === "cobweb" && cell.item === COBWEB_UNKNOWN_ITEM_ID;
 }
 
-/** Предмет учитывается для заказа: свободная клетка или тот же предмет под паутиной (эмодзи виден). */
+/** Предмет «есть на поле» для заказа: свободная клетка или тот же предмет под паутиной (виден игроку). */
 export function gridCellSuppliesItemForOrder(cell: GridCell, itemId: ItemId): boolean {
   if (cell.item !== itemId) return false;
   if (cell.cellType === "item") return true;
@@ -305,8 +305,8 @@ export function orderIsFulfilled(order: Order): boolean {
 }
 
 /**
- * Сколько клеток с данным предметом доступно для заказов:
- * обычный предмет и тот же предмет под паутиной (клетка не `item`).
+ * Сколько клеток с данным предметом учитываются для заказов:
+ * обычный предмет и тот же предмет под паутиной (эмодзи виден, но клетка не `item`).
  */
 export function countOpenItemCellsForId(grid: GridCell[], itemId: ItemId): number {
   let n = 0;
@@ -328,35 +328,76 @@ export function itemCellShowsOrderReadyCheck(orders: Order[], grid: GridCell[], 
   return countOpenItemCellsForId(grid, cellItemId) >= demand;
 }
 
-/** Слот заказа «на поле есть нужное количество» (или строка уже закрыта). */
-export function orderReqLineSatisfiedOnGrid(grid: GridCell[], order: Order, req: OrderRequirement): boolean {
-  const rem = orderRemainingForItem(order, req.itemId);
-  if (rem <= 0) return true;
-  return countOpenItemCellsForId(grid, req.itemId) >= rem;
+/** Оставшееся количество по строке заказа (если один и тот же itemId не повторяется в requirements — как у нас при генерации). */
+function orderRemainingForRequirementLine(order: Order, req: OrderRequirement): number {
+  return Math.max(0, req.count - (order.delivered[req.itemId] ?? 0));
 }
 
-/** Все незакрытые строки заказа можно снять с поля одним действием (включая предмет под паутиной). */
-export function orderAllRemainingSatisfiedFromGrid(grid: GridCell[], order: Order): boolean {
-  const seen = new Set<ItemId>();
+/** Сколько клеток с предметом для заказа остаётся после резервирования под заказы левее в списке. */
+function availableOpenItemCountAfterEarlierOrders(
+  grid: GridCell[],
+  orders: Order[],
+  orderIndex: number,
+  itemId: ItemId
+): number {
+  let avail = countOpenItemCellsForId(grid, itemId);
+  for (let oi = 0; oi < orderIndex; oi++) {
+    const o = orders[oi];
+    if (!o) continue;
+    // Резервируем только под заказы слева, которые реально можно отдать целиком с поля.
+    // Иначе один неполный заказ «съедает» предмет по itemId и блокирует следующие карточки,
+    // пока не появится дубликат предмета.
+    if (!orderAllRemainingSatisfiedFromGrid(grid, orders, oi)) continue;
+    const need = orderRemainingForItem(o, itemId);
+    if (need <= 0) continue;
+    avail -= need;
+  }
+  return avail;
+}
+
+/** Слот заказа «на поле есть нужное количество» с учётом заказов левее в списке. */
+export function orderReqLineSatisfiedOnGrid(
+  grid: GridCell[],
+  orders: Order[],
+  orderIndex: number,
+  order: Order,
+  req: OrderRequirement
+): boolean {
+  const rem = orderRemainingForRequirementLine(order, req);
+  if (rem <= 0) return true;
+
+  let avail = availableOpenItemCountAfterEarlierOrders(grid, orders, orderIndex, req.itemId);
+  const ri = order.requirements.indexOf(req);
+  for (let j = 0; j < ri; j++) {
+    const q = order.requirements[j];
+    if (q.itemId !== req.itemId) continue;
+    const rj = orderRemainingForRequirementLine(order, q);
+    avail -= rj;
+  }
+  return avail >= rem;
+}
+
+/** Все незакрытые строки заказа можно снять с поля с учётом приоритета заказов выше в списке. */
+export function orderAllRemainingSatisfiedFromGrid(grid: GridCell[], orders: Order[], orderIndex: number): boolean {
+  const order = orders[orderIndex];
+  if (!order) return false;
   for (const r of order.requirements) {
-    if (seen.has(r.itemId)) continue;
-    seen.add(r.itemId);
-    const rem = orderRemainingForItem(order, r.itemId);
-    if (rem <= 0) continue;
-    if (countOpenItemCellsForId(grid, r.itemId) < rem) return false;
+    if (!orderReqLineSatisfiedOnGrid(grid, orders, orderIndex, order, r)) return false;
   }
   return true;
 }
 
-/** Индексы клеток для полной сдачи заказа (порядок обхода слева направо; можно снять с паутины). */
-export function collectIndicesForFullOrderDelivery(grid: GridCell[], order: Order): number[] {
+/** Индексы клеток для полной сдачи заказа (слева направо); `forbidden` — клетки, уже занятые заказами слева. */
+function collectIndicesForFullOrderDeliveryWithForbidden(
+  grid: GridCell[],
+  order: Order,
+  forbidden: Set<number>
+): number[] {
   const indices: number[] = [];
-  const used = new Set<number>();
-  const seen = new Set<ItemId>();
+  const used = new Set<number>(forbidden);
+
   for (const r of order.requirements) {
-    if (seen.has(r.itemId)) continue;
-    seen.add(r.itemId);
-    let need = orderRemainingForItem(order, r.itemId);
+    let need = orderRemainingForRequirementLine(order, r);
     for (let i = 0; i < grid.length && need > 0; i++) {
       if (used.has(i)) continue;
       if (gridCellSuppliesItemForOrder(grid[i], r.itemId)) {
@@ -370,9 +411,25 @@ export function collectIndicesForFullOrderDelivery(grid: GridCell[], order: Orde
   return indices;
 }
 
-/** Заказ можно выполнить одним нажатием «Отдать»: все незакрытые позиции закрыты открытыми `item` на поле. */
-export function orderCanDeliverFromGrid(grid: GridCell[], order: Order): boolean {
-  return orderAllRemainingSatisfiedFromGrid(grid, order);
+/** Индексы клеток для полной сдачи заказа с учётом приоритета заказов выше в списке. */
+export function collectIndicesForFullOrderDelivery(grid: GridCell[], orders: Order[], orderIndex: number): number[] {
+  const order = orders[orderIndex];
+  if (!order) return [];
+
+  const forbidden = new Set<number>();
+  for (let oi = 0; oi < orderIndex; oi++) {
+    const o = orders[oi];
+    if (!o) continue;
+    const part = collectIndicesForFullOrderDeliveryWithForbidden(grid, o, forbidden);
+    for (const i of part) forbidden.add(i);
+  }
+
+  return collectIndicesForFullOrderDeliveryWithForbidden(grid, order, forbidden);
+}
+
+/** Заказ можно выполнить одним нажатием «Отдать». */
+export function orderCanDeliverFromGrid(grid: GridCell[], orders: Order[], orderIndex: number): boolean {
+  return orderAllRemainingSatisfiedFromGrid(grid, orders, orderIndex);
 }
 
 /** Первая клетка с предметом для сдачи заказа (`item` или паутина с известным предметом). */
