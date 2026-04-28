@@ -6,6 +6,7 @@
 import React from "react";
 import { X } from "lucide-react";
 import { ALL_ITEMS, ITEM_CHAINS, type ItemId } from "../types";
+import { ROOM_GENERATOR_DEFS } from "../roomMergeCatalog";
 
 export interface OrderItemInfoModalProps {
   open: boolean;
@@ -19,6 +20,10 @@ export default function OrderItemInfoModal({ open, onClose, itemId }: OrderItemI
   if (!def) return null;
   const chainId = "chain" in def ? def.chain : "";
   const chain = chainId ? ITEM_CHAINS[chainId] : undefined;
+  const generators = Object.values(ROOM_GENERATOR_DEFS).filter((g) => g.spawnsChainId === chainId);
+  const chainItems = chain
+    ? chain.items.filter((it): it is { id: string; name: string; emoji: string; level: number } => "level" in it)
+    : [];
 
   return (
     <div
@@ -53,6 +58,39 @@ export default function OrderItemInfoModal({ open, onClose, itemId }: OrderItemI
           <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
             Цепочка: {(chain?.name ?? chainId) || "—"}
           </p>
+          <div className="w-full rounded-xl border border-violet-100 bg-violet-50/50 p-2 text-left">
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-violet-800">Генератор</p>
+            {generators.length > 0 ? (
+              <div className="space-y-1">
+                {generators.map((g) => (
+                  <div key={g.id} className="flex items-center gap-1.5 text-[12px] font-semibold text-violet-950">
+                    <span className="text-base leading-none" aria-hidden>
+                      {g.emoji}
+                    </span>
+                    {g.name}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] font-medium text-gray-500">Для этой цепочки генератор не найден.</p>
+            )}
+          </div>
+          <div className="w-full rounded-xl border border-gray-200 bg-gray-50/80 p-2">
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-700">Цепочка генератора</p>
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {chainItems.map((it) => (
+                <div
+                  key={it.id}
+                  className={`flex min-w-[46px] flex-col items-center rounded-md border px-1.5 py-1 ${
+                    it.id === itemId ? "border-blue-400 bg-blue-50" : "border-gray-200 bg-white"
+                  }`}
+                >
+                  <span className="text-base leading-none">{it.emoji}</span>
+                  <span className="mt-0.5 text-[8px] font-bold text-gray-600">Ур. {it.level}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
         <button
           type="button"
