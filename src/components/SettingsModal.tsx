@@ -13,6 +13,8 @@ export interface SettingsModalProps {
   onToggleDevMode: () => void;
   soundOn: boolean;
   onSoundOnChange: (on: boolean) => void;
+  musicOn: boolean;
+  onMusicOnChange: (on: boolean) => void;
 }
 
 export default function SettingsModal({
@@ -22,6 +24,8 @@ export default function SettingsModal({
   onToggleDevMode,
   soundOn,
   onSoundOnChange,
+  musicOn,
+  onMusicOnChange,
 }: SettingsModalProps) {
   if (!open) return null;
 
@@ -52,7 +56,7 @@ export default function SettingsModal({
             <button
               type="button"
               role="switch"
-              aria-checked={soundOn}
+              aria-checked={soundOn ? "true" : "false"}
               onClick={() => onSoundOnChange(!soundOn)}
               className={`relative h-8 w-14 shrink-0 rounded-full transition-colors ${
                 soundOn ? "bg-blue-500" : "bg-gray-300"
@@ -66,6 +70,25 @@ export default function SettingsModal({
             </button>
           </label>
 
+          <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50/80 px-3 py-3">
+            <span className="text-sm font-bold text-gray-800">Музыка</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={musicOn ? "true" : "false"}
+              onClick={() => onMusicOnChange(!musicOn)}
+              className={`relative h-8 w-14 shrink-0 rounded-full transition-colors ${
+                musicOn ? "bg-blue-500" : "bg-gray-300"
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                  musicOn ? "left-7" : "left-1"
+                }`}
+              />
+            </button>
+          </label>
+
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-amber-200/80 bg-amber-50/90 px-3 py-3">
             <div>
               <span className="text-sm font-bold text-amber-950">DEV MODE</span>
@@ -74,7 +97,7 @@ export default function SettingsModal({
             <button
               type="button"
               role="switch"
-              aria-checked={devMode}
+              aria-checked={devMode ? "true" : "false"}
               onClick={onToggleDevMode}
               className={`relative h-8 w-14 shrink-0 rounded-full transition-colors ${
                 devMode ? "bg-amber-500" : "bg-gray-300"

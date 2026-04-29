@@ -76,6 +76,13 @@ import { StoryEngine } from "./story/StoryEngine";
 import { STORY_BEATS } from "./story/storyData";
 import type { StoryBeat } from "./story/storyData";
 import { initAudio, initSoundPreferenceFromStorage, isSoundMuted, setSoundMuted, sounds } from "./utils/sounds";
+import {
+  initMusicPreferenceFromStorage,
+  isMusicEnabled,
+  playBackgroundMusicIfAllowed,
+  setMusicEnabled,
+  setupMusicRuntime,
+} from "./utils/music";
 import { playSfx } from "./utils/playSfx";
 import CoinFlyBurst, { type CoinFlyBurstSpec } from "./components/CoinFlyBurst";
 import { pickEmptyCellForGeneratorSpawn } from "./utils/grid";
@@ -746,6 +753,7 @@ export default function App() {
   /** Была успешная загрузка из STORAGE_KEY при старте приложения. */
   const [saveLoadedFromDisk, setSaveLoadedFromDisk] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
+  const [musicOn, setMusicOn] = useState(true);
   const [screenEntering, setScreenEntering] = useState(false);
   const skipScreenTransitionRef = useRef(true);
   const [lenaHint, setLenaHint] = useState<{ id: number; text: string } | null>(null);
@@ -1167,6 +1175,10 @@ export default function App() {
   useEffect(() => {
     initSoundPreferenceFromStorage();
     setSoundOn(!isSoundMuted());
+    initMusicPreferenceFromStorage();
+    setMusicOn(isMusicEnabled());
+    setupMusicRuntime();
+    void playBackgroundMusicIfAllowed();
   }, []);
 
   useEffect(() => {
@@ -1966,6 +1978,12 @@ export default function App() {
             onSoundOnChange={(on) => {
               setSoundOn(on);
               setSoundMuted(!on);
+            }}
+            musicOn={musicOn}
+            onMusicOnChange={(on) => {
+              setMusicOn(on);
+              setMusicEnabled(on);
+              void playBackgroundMusicIfAllowed();
             }}
           />
         </div>
