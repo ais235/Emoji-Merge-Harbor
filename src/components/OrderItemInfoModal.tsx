@@ -6,6 +6,7 @@
 import { X } from "lucide-react";
 import { ALL_ITEMS, ITEM_CHAINS, itemIsMergeable, type ItemId } from "../types";
 import { ROOM_GENERATOR_DEFS } from "../roomMergeCatalog";
+import { ItemIcon } from "./ItemIcon";
 
 export interface OrderItemInfoModalProps {
   open: boolean;
@@ -51,7 +52,7 @@ export default function OrderItemInfoModal({ open, onClose, itemId }: OrderItemI
         </div>
         <div className="flex flex-col items-center gap-3 text-center">
           <span className="text-5xl leading-none" aria-hidden>
-            {"emoji" in def ? def.emoji : "❓"}
+            <ItemIcon itemId={itemId} size={56} />
           </span>
           <p className="text-base font-bold text-gray-900">{"name" in def ? def.name : itemId}</p>
           <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
@@ -84,7 +85,7 @@ export default function OrderItemInfoModal({ open, onClose, itemId }: OrderItemI
                     it.id === itemId ? "border-blue-400 bg-blue-50" : "border-gray-200 bg-white"
                   }`}
                 >
-                  <span className="text-base leading-none">{it.emoji}</span>
+                  <ItemIcon itemId={it.id} size={22} />
                   <span className="mt-0.5 text-[8px] font-bold text-gray-600">Ур. {it.level}</span>
                 </div>
               ))}

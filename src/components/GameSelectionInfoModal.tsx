@@ -15,6 +15,7 @@ import {
   type ItemDefinition,
   type ProgressionState,
 } from "../types";
+import { ItemIcon } from "./ItemIcon";
 
 function rarityClass(rarity: string): string {
   if (rarity === "rare") return "border-blue-400 ring-1 ring-blue-200/80";
@@ -96,7 +97,7 @@ export default function GameSelectionInfoModal({
       <div className="space-y-3 text-xs text-gray-800">
         <div className="flex items-center gap-2">
           <span className="text-3xl leading-none" aria-hidden>
-            {def.emoji}
+            <ItemIcon itemId={def.id} size={48} />
           </span>
           <div>
             <p className="text-sm font-black text-gray-900">{def.name}</p>
@@ -134,7 +135,7 @@ export default function GameSelectionInfoModal({
     body = (
       <div className="space-y-3 text-xs text-gray-800">
         <div className="flex items-center gap-2">
-          <span className="text-3xl leading-none">{def.emoji}</span>
+          <ItemIcon itemId={def.id} size={38} />
           <div>
             <p className="text-sm font-black text-gray-900">{def.name}</p>
             <p className="text-[10px] text-gray-500">Уровень в цепочке: {def.level}</p>
@@ -157,7 +158,7 @@ export default function GameSelectionInfoModal({
                         open ? "" : "opacity-40 grayscale"
                       } ${current ? "ring-2 ring-blue-500 ring-offset-1" : ""}`}
                     >
-                      <span className="text-2xl leading-none">{open ? it.emoji : "❔"}</span>
+                      {open ? <ItemIcon itemId={it.id} size={30} /> : <span className="text-2xl leading-none">❔</span>}
                       <span className="mt-0.5 text-center text-[8px] font-bold leading-tight text-gray-700">
                         {open ? it.name : "—"}
                       </span>

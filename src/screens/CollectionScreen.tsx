@@ -4,6 +4,7 @@
  */
 
 import { useUiScaling } from "../hooks/useUiScaling";
+import { ItemIcon } from "../components/ItemIcon";
 import { Coins, Home } from "lucide-react";
 import {
   itemIsGenerator,
@@ -89,8 +90,8 @@ export default function CollectionScreen({ progState, onBack }: CollectionScreen
                       }
                       title={open ? it.name : "Не открыто"}
                     >
-                      <span className="select-none text-[34px] leading-none" aria-hidden>
-                        {open ? it.emoji : "?"}
+                      <span className="flex h-[42px] w-[42px] select-none items-center justify-center text-[30px] leading-none" aria-hidden>
+                        {open ? <ItemIcon itemId={it.id} size={42} /> : "?"}
                       </span>
                       <span
                         className="mt-1 line-clamp-2 min-h-[2.1em] text-center text-[11px] font-medium leading-tight"
