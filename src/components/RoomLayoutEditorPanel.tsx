@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect } from "react";
+import { useEffect } from "react";
 import type { FurnitureLayer, RoomVisual } from "../story/roomData";
 
 function clamp(n: number, min: number, max: number): number {
@@ -150,6 +150,8 @@ export default function RoomLayoutEditorPanel({
   const copySnippet = async () => {
     const text = formatRoomBlock(mergedVisual, draftLayers);
     try {
+      // navigator.clipboard тоже только для защищённого контекста — по LAN его нет.
+      if (!navigator.clipboard) throw new Error("clipboard unavailable");
       await navigator.clipboard.writeText(text);
       // eslint-disable-next-line no-alert -- dev-only editor fallback
       window.alert(

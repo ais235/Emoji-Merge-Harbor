@@ -23,7 +23,8 @@ function ensureAudio(): HTMLAudioElement | null {
   if (audioEl) return audioEl;
   if (MUSIC_TRACKS.length === 0) return null;
   audioEl = new Audio(MUSIC_TRACKS[activeTrackIndex]);
-  audioEl.preload = "auto";
+  // Треки весят единицы мегабайт: не тянем их, пока игрок не разрешил звук жестом.
+  audioEl.preload = "none";
   audioEl.loop = false;
   audioEl.volume = 0.34;
   audioEl.addEventListener("ended", () => {

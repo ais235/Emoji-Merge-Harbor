@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
 import { X } from "lucide-react";
 import {
   ALL_ITEMS,

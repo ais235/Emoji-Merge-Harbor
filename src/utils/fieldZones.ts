@@ -11,10 +11,12 @@ export const FIELD_CONSTANTS = {
   /** Первое открытие клетки зоны 1 после стольких подходящих слияний (0 — сразу по кратности). */
   ZONE_1_UNLOCKS_AFTER_MERGES: 0,
   ZONE_2_ORDERS_PER_TILE: 3,
-  ZONE_3_ORDERS_PER_TILE: 8,
+  /**
+   * Было 8: при 32 клетках зоны 3 это 256 заказов до полного раскрытия поля — слишком длинный хвост.
+   * 5 даёт ~160 заказов, из них 105 первых параллельно закрывают зону 2.
+   */
+  ZONE_3_ORDERS_PER_TILE: 5,
   HINT_BOX_COUNT_PER_ZONE: 3,
-  GENERATOR_BOX_DIST_ZONE2: 5,
-  GENERATOR_BOX_DIST_ZONE3: 7,
 } as const;
 
 export type FieldUnlockZoneId = "zone_1" | "zone_2" | "zone_3";
@@ -55,9 +57,11 @@ export const FIELD_ZONES: FieldZoneEntry[] = [
   },
   {
     id: "zone_3",
+    // distMax с запасом покрывает самые дальние углы поля (для 9×12 манхэттен от центра = 10).
+    // При distMax: 9 две угловые клетки не попадали ни в одну очередь и не открывались никогда.
     name: "Дальняя зона",
     distMin: 7,
-    distMax: 9,
+    distMax: 12,
     opensVia: "orders",
     ordersPerTile: FIELD_CONSTANTS.ZONE_3_ORDERS_PER_TILE,
   },
@@ -120,24 +124,6 @@ export function indicesInManhattanZone(
   return out;
 }
 
-export function fractionZoneExplored(
-  grid: GridCell[],
-  width: number,
-  height: number,
-  centerIdx: number,
-  zoneId: FieldUnlockZoneId | "zone_0"
-): number {
-  const meta = FIELD_ZONES.find((z) => z.id === zoneId);
-  if (!meta) return 1;
-  const indices = indicesInManhattanZone(width, height, centerIdx, meta.distMin, meta.distMax);
-  if (indices.length === 0) return 1;
-  let open = 0;
-  for (const i of indices) {
-    if (!isSealedFieldCell(grid[i]!)) open += 1;
-  }
-  return open / indices.length;
-}
-
 export function buildUnlockQueueForZone(
   zoneId: FieldUnlockZoneId,
   grid: GridCell[],
@@ -163,7 +149,6 @@ export function buildUnlockQueueForZone(
 export function buildAllUnlockQueues(
   grid: GridCell[],
   width: number,
-  height: number,
   centerIdx: number
 ): Record<FieldUnlockZoneId, number[]> {
   return {

@@ -41,11 +41,6 @@ export function isBlockedCellType(t: CellType): boolean {
   return t === "box" || t === "hint_box";
 }
 
-/** @deprecated Используйте isBlockedCellType(cell.cellType) или !isOpenCellType. */
-export function isObstacleCellState(cellType: CellType): boolean {
-  return isBlockedCellType(cellType);
-}
-
 export interface GridCell {
   cellType: CellType;
   item: Item | null;
@@ -189,19 +184,21 @@ export interface ResourcePickupItemDefinition {
 export type ItemDefinition = MergeableItemDefinition | GeneratorItemDefinition | ResourcePickupItemDefinition;
 
 export function itemIsGenerator(def: ItemDefinition): def is GeneratorItemDefinition {
-  return def.isGenerator === true;
+  return "isGenerator" in def && def.isGenerator === true;
 }
 
 export function itemIsResourcePickup(def: ItemDefinition): def is ResourcePickupItemDefinition {
   return "isResourcePickup" in def && def.isResourcePickup === true;
 }
 
+/** Обычный предмет цепочки: не генератор и не подбираемый ресурс (есть `level`). */
+export function itemIsMergeable(def: ItemDefinition): def is MergeableItemDefinition {
+  return !itemIsGenerator(def) && !itemIsResourcePickup(def) && "level" in def;
+}
+
 /** Подбираемые награды на клетке. */
 export const COIN_PICKUP_ITEM_ID = "coin_item";
 export const ENERGY_PICKUP_ITEM_ID = "energy_item";
-
-/** Доля лута с грязи (после прохода общего шанса дропа), приходящаяся на монеты/энергию. */
-export const DIRTY_LOOT_RESOURCE_CHANCE = 0.28;
 
 /** Шанс генератора выдать ресурс вместо предмета 1 уровня. */
 export const GENERATOR_RESOURCE_DROP_CHANCE = 0.07;
@@ -432,16 +429,6 @@ export function orderCanDeliverFromGrid(grid: GridCell[], orders: Order[], order
   return orderAllRemainingSatisfiedFromGrid(grid, orders, orderIndex);
 }
 
-/** Первая клетка с предметом для сдачи заказа (`item` или паутина с известным предметом). */
-export function findFirstCellIndexForOrderDelivery(grid: GridCell[], order: Order): number {
-  for (let i = 0; i < grid.length; i++) {
-    const id = grid[i].item;
-    if (id != null && gridCellSuppliesItemForOrder(grid[i], id) && orderRemainingForItem(order, id) > 0)
-      return i;
-  }
-  return -1;
-}
-
 /** Короткая анимация «+N 💰» у заказа или у клетки слияния (награда за очистку). */
 export type CoinFlyState =
   | { source: "order"; orderId: string; amount: number }
@@ -455,14 +442,21 @@ export interface Upgrade {
   zone: UpgradeZoneId;
   cost: number;
   requiredLevel: number;
+  /**
+   * Каждый тип обязан иметь потребителя в геймплее:
+   * - `visual` — слой интерьера в комнате;
+   * - `energy_max` — потолок энергии (`INITIAL_ENERGY + energy_max`);
+   * - `income_bonus` — множитель монет за заказ;
+   * - `bonus_chance` — шанс удвоить монеты за заказ;
+   * - `box_loot_chance` — шанс бонусных монет при открытии ящика;
+   * - `free_spawn_chance` — шанс не потратить энергию на спавн с генератора.
+   */
   effectType:
     | "visual"
     | "energy_max"
-    | "gen_speed"
     | "income_bonus"
     | "bonus_chance"
-    | "gen_extra_charges"
-    | "dirty_drop_chance"
+    | "box_loot_chance"
     | "free_spawn_chance";
   effectValue: number;
   description: string;
@@ -498,8 +492,6 @@ export interface ProgressionState {
   totalOrdersCompleted: number;
   /** Макс. уровень mergeable-предмета, который игрок уже «видел» на поле (для недостижимых заказов). */
   maxSeenItemLevel: number;
-  /** Выполнено заказов миниигры на текущем уровне ремонта комнаты (сброс при новом визуальном апгрейде этой зоны). */
-  minigameOrdersAtRoomRepair: Partial<Record<ActiveZone, number>>;
 }
 
 /** Прогресс зонального открытия поля (очереди, слияния для зоны 1, заказы для зон 2–3). */
@@ -529,188 +521,23 @@ export interface GameState {
   fieldProgress: FieldProgressState;
 }
 
-const FRUIT_CHAIN_LEN = 7;
-const SWEETS_CHAIN_LEN = 7;
-
 const ROOM_ITEM_CHAINS_MAP: Record<string, ItemChain> = Object.fromEntries(
   Object.values(ROOM_MERGE_CHAINS).map((c) => [
     c.id,
     {
       id: c.id,
       name: c.name,
-      items: c.items as MergeableItemDefinition[],
+      items: c.items.map((it): MergeableItemDefinition => ({ ...it })),
     },
   ])
 );
 
 export const ITEM_CHAINS: Record<string, ItemChain> = {
-  fruit: {
-    id: "fruit",
-    name: "Фруктовый сад",
-    items: [
-      {
-        id: "f1",
-        name: "Красное яблоко",
-        emoji: "🍎",
-        level: 1,
-        chain: "fruit",
-        xpReward: 1,
-        coinReward: 2,
-        rarity: rarityForMergeableLevel(1, FRUIT_CHAIN_LEN),
-        description: "Свежее яблоко — начало простой истории.",
-      },
-      {
-        id: "f2",
-        name: "Зеленое яблоко",
-        emoji: "🍏",
-        level: 2,
-        chain: "fruit",
-        xpReward: 2,
-        coinReward: 4,
-        rarity: rarityForMergeableLevel(2, FRUIT_CHAIN_LEN),
-        description: "Чуть кислее — как будто сад знает толк в контрасте.",
-      },
-      {
-        id: "f3",
-        name: "Груша",
-        emoji: "🍐",
-        level: 3,
-        chain: "fruit",
-        xpReward: 4,
-        coinReward: 8,
-        rarity: rarityForMergeableLevel(3, FRUIT_CHAIN_LEN),
-      },
-      {
-        id: "f4",
-        name: "Апельсин",
-        emoji: "🍊",
-        level: 4,
-        chain: "fruit",
-        xpReward: 8,
-        coinReward: 16,
-        rarity: rarityForMergeableLevel(4, FRUIT_CHAIN_LEN),
-        description: "Запах цитруса — будто лето ещё рядом.",
-      },
-      {
-        id: "f5",
-        name: "Лимон",
-        emoji: "🍋",
-        level: 5,
-        chain: "fruit",
-        xpReward: 16,
-        coinReward: 32,
-        rarity: rarityForMergeableLevel(5, FRUIT_CHAIN_LEN),
-      },
-      {
-        id: "f6",
-        name: "Банан",
-        emoji: "🍌",
-        level: 6,
-        chain: "fruit",
-        xpReward: 32,
-        coinReward: 64,
-        rarity: rarityForMergeableLevel(6, FRUIT_CHAIN_LEN),
-        description: "Похоже, здесь что-то скрывают за этим изгибом кривой.",
-      },
-      {
-        id: "f7",
-        name: "Арбуз",
-        emoji: "🍉",
-        level: 7,
-        chain: "fruit",
-        xpReward: 64,
-        coinReward: 128,
-        rarity: rarityForMergeableLevel(7, FRUIT_CHAIN_LEN),
-        description: "Корона урожая — и, кажется, не только про фрукты.",
-      },
-    ],
-  },
-  sweets: {
-    id: "sweets",
-    name: "Пекарня",
-    items: [
-      {
-        id: "s1",
-        name: "Капкейк",
-        emoji: "🧁",
-        level: 1,
-        chain: "sweets",
-        xpReward: 1,
-        coinReward: 2,
-        rarity: rarityForMergeableLevel(1, SWEETS_CHAIN_LEN),
-        description: "Маленький капкейк — кто-то уже отошёл от стола.",
-      },
-      {
-        id: "s2",
-        name: "Кусочек торта",
-        emoji: "🍰",
-        level: 2,
-        chain: "sweets",
-        xpReward: 2,
-        coinReward: 4,
-        rarity: rarityForMergeableLevel(2, SWEETS_CHAIN_LEN),
-      },
-      {
-        id: "s3",
-        name: "Именинный торт",
-        emoji: "🎂",
-        level: 3,
-        chain: "sweets",
-        xpReward: 4,
-        coinReward: 8,
-        rarity: rarityForMergeableLevel(3, SWEETS_CHAIN_LEN),
-        description: "Этот торт кто-то не доел… или не успел.",
-      },
-      {
-        id: "s4",
-        name: "Пудинг",
-        emoji: "🍮",
-        level: 4,
-        chain: "sweets",
-        xpReward: 8,
-        coinReward: 16,
-        rarity: rarityForMergeableLevel(4, SWEETS_CHAIN_LEN),
-      },
-      {
-        id: "s5",
-        name: "Пончик",
-        emoji: "🍩",
-        level: 5,
-        chain: "sweets",
-        xpReward: 16,
-        coinReward: 32,
-        rarity: rarityForMergeableLevel(5, SWEETS_CHAIN_LEN),
-      },
-      {
-        id: "s6",
-        name: "Печенье",
-        emoji: "🍪",
-        level: 6,
-        chain: "sweets",
-        xpReward: 32,
-        coinReward: 64,
-        rarity: rarityForMergeableLevel(6, SWEETS_CHAIN_LEN),
-        description: "Печенье из той же банки, что стояла у бабушки за стойкой.",
-      },
-      {
-        id: "s7",
-        name: "Шоколад",
-        emoji: "🍫",
-        level: 7,
-        chain: "sweets",
-        xpReward: 64,
-        coinReward: 128,
-        rarity: rarityForMergeableLevel(7, SWEETS_CHAIN_LEN),
-        description: "Плитка награды — сладкая, но не простая.",
-      },
-    ],
-  },
   ...ROOM_ITEM_CHAINS_MAP,
 };
 
 const GENERATOR_ID_TO_PLAY_ZONE: Record<string, ActiveZone> = (() => {
   const m: Record<string, ActiveZone> = {
-    basket_generator: "hall",
   };
   (Object.keys(ZONE_TO_GENERATOR_ID) as ActiveZone[]).forEach((z) => {
     m[ZONE_TO_GENERATOR_ID[z]] = z;
@@ -729,20 +556,6 @@ export function generatorItemIdForZone(z: ActiveZone): string {
 export function activeZoneFromGeneratorItemId(itemId: string): ActiveZone | null {
   const z = GENERATOR_ID_TO_PLAY_ZONE[itemId];
   return z ?? null;
-}
-
-/** Лут с грязи: цепочка текущей комнаты + фрукты и сладости (не раздувает пул). */
-export function chainsForSessionDirtyLoot(zone: ActiveZone): ItemChain[] {
-  const primary = ITEM_CHAINS[mergeChainIdForZone(zone)];
-  const list = [primary, ITEM_CHAINS.fruit, ITEM_CHAINS.sweets];
-  return list.filter((c): c is ItemChain => Boolean(c));
-}
-
-/** Цепочки для заказов и случайного лута (только mergeable-предметы, без генераторов). */
-export function chainsEligibleForLootAndOrders(): ItemChain[] {
-  return Object.values(ITEM_CHAINS).filter((c) =>
-    c.items.some((it) => "level" in it && !itemIsGenerator(it) && !itemIsResourcePickup(it))
-  );
 }
 
 const ALL_ITEMS_FROM_CHAINS: Record<ItemId, ItemDefinition> = Object.values(ITEM_CHAINS).reduce(
@@ -772,19 +585,8 @@ const ROOM_ZONE_GENERATORS: Record<ItemId, GeneratorItemDefinition> = Object.fro
   ])
 );
 
-/** Корзина (наследие сохранений) и генераторы по комнатам. */
+/** Генераторы комнат. */
 const GENERATOR_ITEMS: Record<ItemId, ItemDefinition> = {
-  basket_generator: {
-    id: "basket_generator",
-    name: "Корзина урожая",
-    emoji: "🧺",
-    chain: "generator",
-    isGenerator: true,
-    spawnsChainId: "fruit",
-    xpReward: 0,
-    coinReward: 0,
-    rarity: "common",
-  },
   ...ROOM_ZONE_GENERATORS,
 };
 
@@ -866,10 +668,3 @@ export function activeSpawnsChainIdsFromGrid(grid: GridCell[]): Set<string> {
   return s;
 }
 
-/** Заказы миниигры: только цепочки с текущих генераторов; иначе — цепочка комнаты. */
-export function chainsForSessionOrders(grid: GridCell[], zone: ActiveZone): ItemChain[] {
-  const fromGrid = chainsFromGridGenerators(grid);
-  if (fromGrid.length > 0) return fromGrid;
-  const ch = ITEM_CHAINS[mergeChainIdForZone(zone)];
-  return ch ? [ch] : [ITEM_CHAINS.fruit];
-}

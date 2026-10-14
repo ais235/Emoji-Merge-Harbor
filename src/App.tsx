@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
 import { flushSync } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { Play, Star } from "lucide-react";
@@ -31,11 +31,13 @@ import {
   mergeChainIdForZone,
   isActiveZone,
   type GridCell,
+  type ItemId,
   type FieldProgressState,
   type CoinFlyState,
   isOpenCellType,
   isBlockedCellType,
   itemIsGenerator,
+  itemIsMergeable,
   itemIsResourcePickup,
   COIN_PICKUP_ITEM_ID,
   ENERGY_PICKUP_ITEM_ID,
@@ -48,7 +50,7 @@ import CafeHubScreen from "./screens/CafeHubScreen";
 import RoomScreen from "./screens/RoomScreen";
 import GameScreen from "./screens/GameScreen";
 import CollectionScreen from "./screens/CollectionScreen";
-import { ProgressionManager, EconomyManager, getGeneratorMaxCharges } from "./progressionManager";
+import { ProgressionManager, EconomyManager } from "./progressionManager";
 import { onUpgradePurchased } from "./upgradeDialogs";
 import { HUB_ZONES, mergeUnlockedZonesForLevel, migrateLegacyUpgradeIds, UPGRADES } from "./progressionData";
 import {
@@ -59,7 +61,6 @@ import {
 import CoinShopModal from "./components/CoinShopModal";
 import SettingsModal from "./components/SettingsModal";
 import DialogModal from "./components/DialogModal";
-import OnboardingOverlay from "./components/OnboardingOverlay";
 import DailyBonusModal from "./components/DailyBonusModal";
 import DailyScreen from "./screens/DailyScreen";
 import {
@@ -86,6 +87,7 @@ import {
 import { playSfx } from "./utils/playSfx";
 import CoinFlyBurst, { type CoinFlyBurstSpec } from "./components/CoinFlyBurst";
 import { pickEmptyCellForGeneratorSpawn } from "./utils/grid";
+import { randomId } from "./utils/uid";
 import { hasEffectiveMoves } from "./utils/availableMoves";
 import { migrateLegacyGridCell } from "./utils/gridUnlockHelpers";
 import { buildInitialGrid, type BuildInitialGridResult } from "./utils/buildInitialGrid";
@@ -93,7 +95,6 @@ import {
   handleMergeFieldProgress,
   handleOrderFieldProgress,
   migrateFieldProgressFromGrid,
-  type MergeFieldProgressResult,
 } from "./utils/mergeFieldProgress";
 import { emptyGridCell, generatorGridCell, itemGridCell, withSyncedItemMeta } from "./utils/gridCells";
 import {
@@ -105,6 +106,7 @@ import {
 import {
   COINS_AD_COOLDOWN_MS,
   COINS_AD_REWARD,
+  ENERGY_AD_COOLDOWN_MS,
   ENERGY_AD_REWARD,
   ENERGY_MAX_DEFAULT,
   ENERGY_ORDER_COMPLETE_BONUS,
@@ -115,6 +117,7 @@ import {
   upgradeZoneToActiveZone,
 } from "./utils/roomOrderLimit";
 import {
+  canDeliverReconstructionItem,
   defaultReconstructionState,
   getCurrentReconstructionStage,
   normalizeReconstructionState,
@@ -122,7 +125,23 @@ import {
   tryCompleteReconstructionItemsStage,
   tryDeliverReconstructionItem,
 } from "./reconstruction";
-import { syncGeneratorChestsForProgress } from "./utils/generatorProgression";
+import { syncUnlockedGeneratorsForLevel, type AddedGeneratorFx } from "./utils/generatorProgression";
+
+/** Бонус доступен раз в ~сутки; стрик рвётся, если игрок не заходил больше двух суток. */
+const DAILY_BONUS_COOLDOWN_MS = 20 * 60 * 60 * 1000;
+const DAILY_STREAK_BREAK_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * День стрика для следующего получения бонуса.
+ * Раньше счётчик просто рос при каждом заборе и не сбрасывался при пропусках,
+ * то есть «7 дней подряд» можно было собрать с любыми перерывами.
+ */
+function dailyStreakDayForNextClaim(lastClaimAt: number | null, now: number): number {
+  const stored = Number(localStorage.getItem(DAILY_STREAK_KEY) || "0");
+  const prevDay = Number.isFinite(stored) ? Math.min(7, Math.max(0, Math.floor(stored))) : 0;
+  if (lastClaimAt == null || now - lastClaimAt > DAILY_STREAK_BREAK_MS) return 1;
+  return prevDay >= 7 ? 1 : prevDay + 1;
+}
 
 const SHOWN_BEATS_KEY = "shownBeats";
 const LAST_DAILY_BONUS_KEY = "lastDailyBonus";
@@ -130,7 +149,6 @@ const DAILY_STREAK_KEY = "dailyStreak";
 const SHOWN_UPGRADE_HINTS_KEY = "shownUpgradeHints";
 const SHOWN_ROOM_HINTS_KEY = "shownRoomHints";
 const adService = new AbstractAdService();
-const ORDER_COUNTER_ZONE: ActiveZone = "hall";
 
 const GRID_WIDTH = 9;
 const GRID_HEIGHT = 12;
@@ -167,10 +185,6 @@ function readSaveAgeMinutes(): number | null {
   }
 }
 
-function createNormalEmptyGridCell(): GridCell {
-  return emptyGridCell();
-}
-
 /** Генератор комнаты в первой свободной обычной клетке (новая сетка / сессия). */
 function placeInitialGenerator(grid: GridCell[], zone: ActiveZone): GridCell[] {
   const next = grid.map((c) => ({ ...c }));
@@ -182,7 +196,7 @@ function placeInitialGenerator(grid: GridCell[], zone: ActiveZone): GridCell[] {
 }
 
 /** После обмена предметами между клетками. */
-function gridCellAfterPlacingItem(targetCell: GridCell, newItem: string | null): GridCell {
+function gridCellAfterPlacingItem(newItem: string | null): GridCell {
   if (!newItem) {
     return emptyGridCell();
   }
@@ -191,6 +205,20 @@ function gridCellAfterPlacingItem(targetCell: GridCell, newItem: string | null):
     return generatorGridCell(newItem);
   }
   return withSyncedItemMeta(itemGridCell(newItem));
+}
+
+/** Два тапа сливают предметы только если это реально слияние; обмен местами остаётся за драгом. */
+function canMergeGridPair(grid: GridCell[], from: number, to: number): boolean {
+  if (from === to) return false;
+  const a = grid[from];
+  const b = grid[to];
+  if (!a || !b || !a.item || a.item !== b.item) return false;
+  if (a.cellType !== "item") return false;
+  if (b.cellType !== "item" && b.cellType !== "cobweb") return false;
+  const def = ALL_ITEMS[a.item];
+  if (!def || !itemIsMergeable(def)) return false;
+  if (b.cellType === "cobweb" && def.level !== b.itemLevel) return false;
+  return Boolean(ITEM_CHAINS[def.chain]?.items[def.level]);
 }
 
 function gridHasGenerator(grid: GridCell[]): boolean {
@@ -274,6 +302,30 @@ function applyEnergyCapsForProgress(gs: GameState, prog: ProgressionState): Game
   };
 }
 
+/**
+ * Реген энергии по времени, а не по тикам таймера: работает и пока вкладка закрыта,
+ * и когда браузер тормозит фоновые интервалы. `lastEnergyRegenAt` двигаем ровно на
+ * начисленные интервалы, чтобы остаток времени не терялся.
+ */
+function withEnergyRegenFromClock(gs: GameState, now = Date.now()): GameState {
+  if (gs.energy >= gs.maxEnergy) {
+    // Полная шкала: держим точку отсчёта свежей, иначе после первой траты
+    // «до следующей» покажет случайный остаток от давнего таймстампа.
+    if (now - gs.lastEnergyRegenAt < ENERGY_REGEN_INTERVAL_MS) return gs;
+    return { ...gs, lastEnergyRegenAt: now };
+  }
+  const elapsed = now - gs.lastEnergyRegenAt;
+  if (elapsed < ENERGY_REGEN_INTERVAL_MS) return gs;
+  const gained = Math.floor(elapsed / ENERGY_REGEN_INTERVAL_MS);
+  const energy = Math.min(gs.maxEnergy, gs.energy + gained);
+  return {
+    ...gs,
+    energy,
+    lastEnergyRegenAt:
+      energy >= gs.maxEnergy ? now : gs.lastEnergyRegenAt + gained * ENERGY_REGEN_INTERVAL_MS,
+  };
+}
+
 function mergeableItemsInChain(chain: ItemChain): MergeableItemDefinition[] {
   return chain.items.filter(
     (it): it is MergeableItemDefinition =>
@@ -307,54 +359,21 @@ function nextAvailableVisualUpgrade(prog: Pick<ProgressionState, "level" | "purc
   return first ? { id: first.id, cost: first.cost, name: first.name } : null;
 }
 
-function globalOrderCounter(prog: Pick<ProgressionState, "minigameOrdersAtRoomRepair">): number {
-  const v = prog.minigameOrdersAtRoomRepair?.[ORDER_COUNTER_ZONE];
-  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0;
-}
-
-function maxOrdersBeforeShopPrompt(level: number): number {
-  return Math.max(8, Math.min(18, 8 + Math.floor(level / 2)));
-}
-
-function canGenerateOrdersBeforeShopPrompt(
-  prog: Pick<ProgressionState, "minigameOrdersAtRoomRepair" | "level">
-): boolean {
-  return globalOrderCounter(prog) < maxOrdersBeforeShopPrompt(prog.level);
-}
-
-function withIncrementOrderCounter(prog: ProgressionState): ProgressionState {
-  const prev = globalOrderCounter(prog);
-  return {
-    ...prog,
-    minigameOrdersAtRoomRepair: {
-      ...(prog.minigameOrdersAtRoomRepair ?? {}),
-      [ORDER_COUNTER_ZONE]: prev + 1,
-    },
-  };
-}
-
-function withResetOrderCounter(prog: ProgressionState): ProgressionState {
-  return {
-    ...prog,
-    minigameOrdersAtRoomRepair: {
-      ...(prog.minigameOrdersAtRoomRepair ?? {}),
-      [ORDER_COUNTER_ZONE]: 0,
-    },
-  };
-}
-
-function buildRandomSessionOrder(
+/**
+ * Пул предметов, из которых можно собрать заказ текущей сессии.
+ * Единственный источник правды для `buildRandomSessionOrder` и подсчёта слотов —
+ * раньше этот расчёт был скопирован в две функции слово в слово.
+ */
+function sessionOrderCandidatePool(
   level: number,
   maxSeenItemLevel: number,
   grid: GridCell[],
-  zone: ActiveZone,
-  orderId: string
-): Order {
+  zone: ActiveZone
+): { ids: ItemId[]; chainsBase: ItemChain[]; allowedMinLevel: number; allowedMaxLevel: number } {
   const chainsFromGens = chainsFromGridGenerators(grid);
   const chainsBase =
-    chainsFromGens.length > 0 ? chainsFromGens : [ITEM_CHAINS[mergeChainIdForZone(zone)] ?? ITEM_CHAINS.fruit];
+    chainsFromGens.length > 0 ? chainsFromGens : [ITEM_CHAINS[mergeChainIdForZone(zone)] ?? ITEM_CHAINS.hall_tea];
 
-  const tierMin = playerTierMinOrderItemLevel(level);
   const tierMaxCap = playerTierMaxOrderItemLevel(level);
   /** На 1 уровень выше максимума «видел на поле» — стимул к слияниям; не выше потолка по уровню игрока. */
   const orderMaxLevel = Math.min(Math.max(1, maxSeenItemLevel) + 1, tierMaxCap);
@@ -363,14 +382,17 @@ function buildRandomSessionOrder(
   const allowedMaxLevel = Math.max(allowedMinLevel, orderMaxLevel);
 
   const spawnChainIds = new Set(chainsBase.map((c) => c.id));
-  const candidateIds = new Set<string>();
+  const candidateIds = new Set<ItemId>();
+
+  const levelOnCell = (cell: GridCell, def: MergeableItemDefinition): number =>
+    cell.cellType === "cobweb" ? Math.max(1, cell.itemLevel) : def.level;
 
   for (const c of grid) {
     if (c.cellType !== "item" && c.cellType !== "cobweb") continue;
     if (!c.item || isCobwebUnknownPlaceholder(c)) continue;
     const d = ALL_ITEMS[c.item];
-    if (!d || !("level" in d) || itemIsGenerator(d) || itemIsResourcePickup(d)) continue;
-    const lv = c.cellType === "cobweb" ? Math.max(1, c.itemLevel) : d.level;
+    if (!d || !itemIsMergeable(d)) continue;
+    const lv = levelOnCell(c, d);
     if (lv < allowedMinLevel || lv > allowedMaxLevel) continue;
     candidateIds.add(c.item);
   }
@@ -382,15 +404,14 @@ function buildRandomSessionOrder(
   }
 
   const chainSlice = playerTierOrderChainSliceCount(level, chainsBase.length);
-  const chainsForFilter = chainsBase.slice(0, Math.max(1, chainSlice));
-  const allowedChainIds = new Set(chainsForFilter.map((c) => c.id));
+  const allowedChainIds = new Set(chainsBase.slice(0, Math.max(1, chainSlice)).map((c) => c.id));
 
   for (const id of [...candidateIds]) {
     const d = ALL_ITEMS[id];
-    if (!d || !("level" in d) || itemIsGenerator(d) || itemIsResourcePickup(d)) continue;
+    if (!d || !itemIsMergeable(d)) continue;
     const onGrid = grid.some((cell) => {
       if (cell.item !== id || (cell.cellType !== "item" && cell.cellType !== "cobweb")) return false;
-      const lv = cell.cellType === "cobweb" ? Math.max(1, cell.itemLevel) : d.level;
+      const lv = levelOnCell(cell, d);
       return lv >= allowedMinLevel && lv <= allowedMaxLevel;
     });
     const spawnable =
@@ -400,6 +421,32 @@ function buildRandomSessionOrder(
       allowedChainIds.has(d.chain);
     if (!onGrid && !spawnable) candidateIds.delete(id);
   }
+
+  return { ids: [...candidateIds], chainsBase, allowedMinLevel, allowedMaxLevel };
+}
+
+/** Портрет, которого ещё нет среди активных заказов (иначе на экране два одинаковых гостя). */
+function pickCustomerAvatar(existing: Order[]): string {
+  const used = new Set(existing.map((o) => resolveOrderCustomerAvatar(o)));
+  const free = ORDER_CUSTOMER_AVATAR_PATHS.filter((p) => !used.has(p));
+  const pool = free.length > 0 ? free : ORDER_CUSTOMER_AVATAR_PATHS;
+  return pool[Math.floor(Math.random() * pool.length)]!;
+}
+
+function buildRandomSessionOrder(
+  level: number,
+  maxSeenItemLevel: number,
+  grid: GridCell[],
+  zone: ActiveZone,
+  orderId: string,
+  existingOrders: Order[] = []
+): Order {
+  const { ids: candidateIds, chainsBase, allowedMinLevel, allowedMaxLevel } = sessionOrderCandidatePool(
+    level,
+    maxSeenItemLevel,
+    grid,
+    zone
+  );
 
   const poolShuffled = [...candidateIds].sort(() => Math.random() - 0.5);
   const complexity = pickOrderComplexity(level);
@@ -426,7 +473,7 @@ function buildRandomSessionOrder(
     }
   }
   if (requirements.length === 0) {
-    const mergeables = mergeableItemsInChain(ITEM_CHAINS.fruit);
+    const mergeables = mergeableItemsInChain(ITEM_CHAINS.hall_tea);
     const pick =
       mergeables.find((x) => x.level >= allowedMinLevel && x.level <= allowedMaxLevel) ??
       mergeables.filter((x) => x.level <= allowedMaxLevel).at(-1) ??
@@ -434,7 +481,7 @@ function buildRandomSessionOrder(
     if (pick) requirements.push({ itemId: pick.id, count: 1 });
   }
   if (requirements.length === 0) {
-    requirements.push({ itemId: mergeableItemsInChain(ITEM_CHAINS.fruit)[0]?.id ?? "f1", count: 1 });
+    requirements.push({ itemId: mergeableItemsInChain(ITEM_CHAINS.hall_tea)[0]?.id ?? "hl1", count: 1 });
   }
 
   const difficulty = complexity;
@@ -444,12 +491,11 @@ function buildRandomSessionOrder(
   const mult = complexityMult + 0.2 * (totalUnits - 1) + 0.1 * (requirements.length - 1);
   const rewardCoins = Math.round(base.coins * mult);
   const rewardXp = Math.round(base.xp * mult);
-  const customerAvatar =
-    ORDER_CUSTOMER_AVATAR_PATHS[Math.floor(Math.random() * ORDER_CUSTOMER_AVATAR_PATHS.length)]!;
+  const customerAvatar = pickCustomerAvatar(existingOrders);
 
   return {
     id: orderId,
-    instanceId: crypto.randomUUID(),
+    instanceId: randomId(),
     requirements,
     delivered: {},
     rewardCoins,
@@ -458,33 +504,122 @@ function buildRandomSessionOrder(
   };
 }
 
-/** Сигнатура слота заказа: конкретный предмет уровня (id уже задаёт уровень в цепочке). */
-function orderRequirementKey(itemId: string): string | null {
-  const d = ALL_ITEMS[itemId];
-  if (!d || !("level" in d) || itemIsGenerator(d) || itemIsResourcePickup(d)) return null;
-  return `${itemId}:${d.level}`;
+/**
+ * Сколько заказов держать активными. Слотов не больше, чем различных предметов в пуле:
+ * на 1 уровне пул — всего 2 предмета (ур. 1 и 2), и три карточки просили один и тот же чайник.
+ */
+function activeOrderSlotsForPool(poolSize: number): number {
+  return Math.max(1, Math.min(MAX_ACTIVE_ORDERS, poolSize));
 }
 
-function orderRequirementKeySet(order: Order): Set<string> {
-  const keys = new Set<string>();
-  for (const r of order.requirements) {
-    const k = orderRequirementKey(r.itemId);
-    if (k) keys.add(k);
-  }
-  return keys;
+function activeOrderSlots(
+  level: number,
+  maxSeenItemLevel: number,
+  grid: GridCell[],
+  zone: ActiveZone
+): number {
+  return activeOrderSlotsForPool(
+    eligibleMergeableItemIdsForSessionOrder(level, maxSeenItemLevel, grid, zone).length
+  );
 }
 
-/** Активные заказы не должны дублировать один и тот же предмет (тот же id = тот же уровень в merge-цепочке). */
+function collectOrderItemIds(order: Order): Set<string> {
+  const s = new Set<string>();
+  for (const r of order.requirements) s.add(r.itemId);
+  return s;
+}
+
+/** Один и тот же itemId не может быть в двух активных заказах одновременно. */
 function orderConflictsWithExisting(candidate: Order, existing: Order[]): boolean {
-  const cKeys = orderRequirementKeySet(candidate);
-  if (cKeys.size === 0) return false;
+  const cIds = collectOrderItemIds(candidate);
   return existing.some((o) => {
-    const oKeys = orderRequirementKeySet(o);
-    for (const k of cKeys) {
-      if (oKeys.has(k)) return true;
+    const oIds = collectOrderItemIds(o);
+    for (const id of cIds) {
+      if (oIds.has(id)) return true;
     }
     return false;
   });
+}
+
+function eligibleMergeableItemIdsForSessionOrder(
+  level: number,
+  maxSeenItemLevel: number,
+  grid: GridCell[],
+  zone: ActiveZone
+): ItemId[] {
+  return sessionOrderCandidatePool(level, maxSeenItemLevel, grid, zone).ids;
+}
+
+function patchOrderRewardsFromRequirements(order: Order): Order {
+  const complexity: OrderComplexity =
+    order.requirements.length >= 3 ? "hard" : order.requirements.length === 2 ? "medium" : "simple";
+  const base = EconomyManager.calculateOrderReward(complexity);
+  const totalUnits = order.requirements.reduce((s, q) => s + q.count, 0);
+  const complexityMult = complexity === "simple" ? 1 : complexity === "medium" ? 1.6 : 2.4;
+  const mult = complexityMult + 0.2 * (totalUnits - 1) + 0.1 * (order.requirements.length - 1);
+  return {
+    ...order,
+    rewardCoins: Math.round(base.coins * mult),
+    rewardXp: Math.round(base.xp * mult),
+  };
+}
+
+function forceUniqueOrderAgainstExisting(
+  order: Order,
+  existing: Order[],
+  level: number,
+  maxSeenItemLevel: number,
+  grid: GridCell[],
+  zone: ActiveZone
+): Order {
+  const used = new Set<string>();
+  for (const o of existing) {
+    for (const id of collectOrderItemIds(o)) used.add(id);
+  }
+
+  const pool = eligibleMergeableItemIdsForSessionOrder(level, maxSeenItemLevel, grid, zone).filter((id) => !used.has(id));
+  const poolShuffled = [...pool].sort(() => Math.random() - 0.5);
+
+  let pi = 0;
+  const nextReq = order.requirements.map((r) => ({ ...r }));
+  for (let i = 0; i < nextReq.length; i++) {
+    const id = nextReq[i].itemId;
+    if (!used.has(id)) {
+      used.add(id);
+      continue;
+    }
+    while (pi < poolShuffled.length && used.has(poolShuffled[pi]!)) pi += 1;
+    const repl = poolShuffled[pi];
+    if (!repl) break;
+    nextReq[i] = { ...nextReq[i], itemId: repl };
+    used.add(repl);
+    pi += 1;
+  }
+
+  let next: Order = { ...order, requirements: nextReq };
+  next = patchOrderRewardsFromRequirements(next);
+  return next;
+}
+
+/** Починить уже сохранённые заказы: убрать пересечения itemId между активными заказами. */
+function repairActiveOrdersUniqueItemIds(
+  orders: Order[],
+  level: number,
+  maxSeenItemLevel: number,
+  grid: GridCell[],
+  zone: ActiveZone
+): Order[] {
+  const out: Order[] = [];
+  for (let i = 0; i < orders.length; i++) {
+    let o = orders[i];
+    if (!o) continue;
+    const prev = out;
+    if (orderConflictsWithExisting(o, prev)) {
+      o = forceUniqueOrderAgainstExisting(o, prev, level, maxSeenItemLevel, grid, zone);
+    }
+    out.push(o);
+  }
+  return out;
 }
 
 function buildUniqueRandomOrder(
@@ -496,10 +631,13 @@ function buildUniqueRandomOrder(
   orderId: string
 ): Order {
   let attempts = 0;
-  let order = buildRandomSessionOrder(level, maxSeenItemLevel, grid, zone, orderId);
+  let order = buildRandomSessionOrder(level, maxSeenItemLevel, grid, zone, orderId, existing);
   while (attempts < 22 && orderConflictsWithExisting(order, existing)) {
     attempts += 1;
-    order = buildRandomSessionOrder(level, maxSeenItemLevel, grid, zone, `${orderId}_u${attempts}`);
+    order = buildRandomSessionOrder(level, maxSeenItemLevel, grid, zone, `${orderId}_u${attempts}`, existing);
+  }
+  if (orderConflictsWithExisting(order, existing)) {
+    order = forceUniqueOrderAgainstExisting(order, existing, level, maxSeenItemLevel, grid, zone);
   }
   return order;
 }
@@ -508,12 +646,12 @@ function createInitialOrders(
   grid: GridCell[],
   zone: ActiveZone,
   level: number,
-  maxSeenItemLevel: number,
-  orderProg: Pick<ProgressionState, "minigameOrdersAtRoomRepair" | "level">
+  maxSeenItemLevel: number
 ): Order[] {
+  const slots = activeOrderSlots(level, maxSeenItemLevel, grid, zone);
   const out: Order[] = [];
   let i = 0;
-  while (out.length < MAX_ACTIVE_ORDERS && canGenerateOrdersBeforeShopPrompt(orderProg)) {
+  while (out.length < slots) {
     out.push(buildUniqueRandomOrder(out, level, maxSeenItemLevel, grid, zone, `o${i + 1}`));
     i += 1;
     if (i > 20) break;
@@ -566,7 +704,9 @@ function normalizeOneOrder(o: unknown): Order | null {
         if (!itemId || !count) return null;
         const itemLevel =
           typeof q.itemLevel === "number" && q.itemLevel >= 1 ? Math.floor(q.itemLevel) : undefined;
-        return itemLevel !== undefined ? { itemId, count, itemLevel } : { itemId, count };
+        const req: OrderRequirement =
+          itemLevel !== undefined ? { itemId, count, itemLevel } : { itemId, count };
+        return req;
       })
       .filter((x): x is OrderRequirement => x !== null);
     if (requirements.length === 0) return null;
@@ -601,7 +741,7 @@ function normalizeOneOrder(o: unknown): Order | null {
   }
 
   const instanceId =
-    typeof r.instanceId === "string" && r.instanceId.length > 0 ? r.instanceId : crypto.randomUUID();
+    typeof r.instanceId === "string" && r.instanceId.length > 0 ? r.instanceId : randomId();
 
   const customerAvatarRaw =
     typeof r.customerAvatar === "string" && r.customerAvatar.trim().startsWith("/avatars/")
@@ -633,7 +773,7 @@ function hydrateGameStateFromStorage(
   maxSeenItemLevel = 1,
   progForOrderLimit: Pick<
     ProgressionState,
-    "minigameOrdersAtRoomRepair" | "purchasedUpgrades" | "level" | "totalOrdersCompleted"
+    "purchasedUpgrades" | "level" | "totalOrdersCompleted"
   > | null = null
 ): GameState | null {
   if (!raw || typeof raw !== "object") return null;
@@ -666,23 +806,18 @@ function hydrateGameStateFromStorage(
     lastEnergyRegenAt,
     orders: (() => {
       const rawO = Array.isArray(g.orders) ? normalizeOrdersFromStorage(g.orders) : [];
-      const limitProg: Pick<
-        ProgressionState,
-        "minigameOrdersAtRoomRepair" | "purchasedUpgrades" | "level" | "totalOrdersCompleted"
-      > = progForOrderLimit ?? {
-        level: defaultLevel,
-        purchasedUpgrades: [],
-        minigameOrdersAtRoomRepair: {},
-        totalOrdersCompleted: 0,
-      };
+      const limitProg: Pick<ProgressionState, "purchasedUpgrades" | "level" | "totalOrdersCompleted"> =
+        progForOrderLimit ?? { level: defaultLevel, purchasedUpgrades: [], totalOrdersCompleted: 0 };
+      const slots = activeOrderSlots(limitProg.level, maxSeenItemLevel, grid, inferredZone);
       let o =
-        rawO.length > 0
-          ? rawO
-          : createInitialOrders(grid, inferredZone, defaultLevel, maxSeenItemLevel, limitProg);
-      while (o.length < MAX_ACTIVE_ORDERS) {
+        rawO.length > 0 ? rawO : createInitialOrders(grid, inferredZone, defaultLevel, maxSeenItemLevel);
+      o = repairActiveOrdersUniqueItemIds(o, limitProg.level, maxSeenItemLevel, grid, inferredZone);
+      let guard = 0;
+      while (o.length < slots && guard < 12) {
+        guard += 1;
         o.push(generateNewOrder(limitProg.level, maxSeenItemLevel, grid, inferredZone, o));
       }
-      return o.slice(0, MAX_ACTIVE_ORDERS);
+      return o.slice(0, slots);
     })(),
     isFirstLaunch: g.isFirstLaunch !== false,
     playZone: inferredZone,
@@ -717,7 +852,6 @@ export default function App() {
   const [devMode, setDevMode] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<AppScreen>("menu");
   const [activeZone, setActiveZone] = useState<ActiveZone>("hall");
-  const [lastAction, setLastAction] = useState<{ type: "merge" | "spawn" | "order", index?: number } | null>(null);
   const [currentBeat, setCurrentBeat] = useState<StoryBeat | null>(null);
   const [shownBeats, setShownBeats] = useState<string[]>([]);
   const [ordersCompleted, setOrdersCompleted] = useState(0);
@@ -727,28 +861,30 @@ export default function App() {
   const [cellMergePopIndex, setCellMergePopIndex] = useState<number | null>(null);
   /** Индексы соседей, только что очищенных от препятствия после merge (краткая анимация). */
   const [cellUnlockedFlashIndices, setCellUnlockedFlashIndices] = useState<number[]>([]);
-  /** Новые сундуки-генераторы, появившиеся на поле по прогрессу (краткая анимация появления). */
-  const [generatorChestAppearIndices, setGeneratorChestAppearIndices] = useState<number[]>([]);
+  /** Новые генераторы, появившиеся на поле по уровню (краткая анимация появления в клетке). */
+  const [generatorAppearIndices, setGeneratorAppearIndices] = useState<number[]>([]);
+  const [generatorUnlockFx, setGeneratorUnlockFx] = useState<(AddedGeneratorFx & { fxId: number }) | null>(null);
   /** Усиленная вспышка при открытии ящика с генератором. */
   const [cellUnlockHeavyFlash, setCellUnlockHeavyFlash] = useState(false);
   const [cellShakePair, setCellShakePair] = useState<[number, number] | null>(null);
   const [coinFly, setCoinFly] = useState<CoinFlyState | null>(null);
   const [coinFlyBurst, setCoinFlyBurst] = useState<CoinFlyBurstSpec | null>(null);
   const [mergeBurstCellIndex, setMergeBurstCellIndex] = useState<number | null>(null);
+  /** Клетка, куда предмет упал бесплатно (апгрейд `free_spawn_chance`) — короткий бейдж «бесплатно». */
+  const [freeSpawnFlashIndex, setFreeSpawnFlashIndex] = useState<number | null>(null);
   /** Нет эффективных ходов (слияние / заказ / спавн при энергии); UI мягкий, ввод не блокируем. */
   const [isNoMoves, setIsNoMoves] = useState(false);
   const [purchaseSparkleNonce, setPurchaseSparkleNonce] = useState(0);
   const [roomPurchaseToast, setRoomPurchaseToast] = useState<string | null>(null);
-  const purchaseToastClearRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
-  /** После исчерпания заказов в миниигре — подсветка комнаты в хабе. */
-  const [hubHighlightZone, setHubHighlightZone] = useState<ActiveZone | null>(null);
+  const purchaseToastClearRef = useRef<number | null>(null);
   const [hubOrdersBackToast, setHubOrdersBackToast] = useState<string | null>(null);
   const [hubPulsePlayButton, setHubPulsePlayButton] = useState(false);
-  const hubOrdersToastClearRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const hubOrdersToastClearRef = useRef<number | null>(null);
   const currentScreenRef = useRef<AppScreen>("menu");
   const [coinShopOpen, setCoinShopOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [lastCoinsAdAt, setLastCoinsAdAt] = useState(0);
+  const [lastEnergyAdAt, setLastEnergyAdAt] = useState(0);
   const [roomAdTick, setRoomAdTick] = useState(0);
   /** Была успешная загрузка из STORAGE_KEY при старте приложения. */
   const [saveLoadedFromDisk, setSaveLoadedFromDisk] = useState(false);
@@ -781,6 +917,14 @@ export default function App() {
   const affordEdgeUpgradeIdRef = useRef<string | null>(null);
   const prevUnlockedZonesRef = useRef<string[] | null>(null);
 
+  useEffect(() => {
+    if (!lenaHint) return;
+    const timer = window.setTimeout(() => {
+      setLenaHint((cur) => (cur?.id === lenaHint.id ? null : cur));
+    }, 5500);
+    return () => window.clearTimeout(timer);
+  }, [lenaHint]);
+
   const triggerLevelUp = useCallback(() => {
     sounds.levelUp();
     setShowLevelUpFlash(true);
@@ -802,20 +946,6 @@ export default function App() {
     });
   }, [state, progState]);
 
-  const handleSessionExitHome = useCallback(() => {
-    setShowTutorial(false);
-    setCurrentScreen("hub");
-  }, []);
-
-  const handleOrdersExhaustedGoHome = useCallback(() => {
-    setShowTutorial(false);
-    if (state?.playZone) {
-      setActiveZone(state.playZone);
-      setHubHighlightZone(state.playZone);
-    }
-    setCurrentScreen("hub");
-  }, [state?.playZone]);
-
   const handleNoMovesExitHome = useCallback(() => {
     setShowTutorial(false);
     setCurrentScreen("hub");
@@ -827,14 +957,31 @@ export default function App() {
     setCoinFly(null);
   }, []);
 
-  const handleWatchAdEnergy = useCallback(() => {
-    setState((s) =>
-      s ? { ...s, energy: Math.min(s.maxEnergy, s.energy + ENERGY_AD_REWARD) } : s
-    );
-    setRoomPurchaseToast(`+${ENERGY_AD_REWARD} энергии за просмотр рекламы`);
-    if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
-    purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 2800);
-  }, []);
+  /**
+   * Награда за рекламу: энергия. Раньше кнопка просто прибавляла +15 без показа рекламы
+   * и без кулдауна — то есть давала бесконечную энергию в один клик.
+   */
+  const handleWatchAdEnergy = useCallback(async () => {
+    const showToast = (text: string) => {
+      setRoomPurchaseToast(text);
+      if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
+      purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 2800);
+    };
+
+    const remaining = lastEnergyAdAt <= 0 ? 0 : ENERGY_AD_COOLDOWN_MS - (Date.now() - lastEnergyAdAt);
+    if (remaining > 0) {
+      const seconds = Math.ceil(remaining / 1000);
+      showToast(`Реклама будет доступна через ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`);
+      return;
+    }
+
+    const shown = await adService.showRewarded(() => {
+      setState((s) => (s ? { ...s, energy: Math.min(s.maxEnergy, s.energy + ENERGY_AD_REWARD) } : s));
+      setLastEnergyAdAt(Date.now());
+      showToast(`+${ENERGY_AD_REWARD} энергии за просмотр рекламы`);
+    });
+    if (!shown) showToast("Реклама сейчас недоступна. Попробуйте чуть позже.");
+  }, [lastEnergyAdAt]);
 
   useEffect(() => {
     if (currentScreen !== "room") return;
@@ -910,26 +1057,23 @@ export default function App() {
       setIsNoMoves(false);
       return;
     }
-    const genMax = getGeneratorMaxCharges(progState.purchasedUpgrades);
-    setIsNoMoves(
-      !hasEffectiveMoves(state.grid, state.orders, state.energy, genMax, GRID_WIDTH, GRID_HEIGHT)
-    );
+    setIsNoMoves(!hasEffectiveMoves(state.grid, state.orders, state.energy));
   }, [state, progState, currentScreen]);
 
-  /** Единое поле: новые генераторы открываются как видимые сундуки при достижении прогресса. */
+  /** Единое поле: генераторы комнат появляются на поле по уровню открытия комнаты. */
   useEffect(() => {
     if (!state || !progState) return;
-    const result = syncGeneratorChestsForProgress(state.grid, GRID_WIDTH, GRID_HEIGHT, progState);
-    if (result.addedIndices.length === 0) return;
+    const result = syncUnlockedGeneratorsForLevel(state.grid, GRID_WIDTH, GRID_HEIGHT, progState.level);
+    if (result.added.length === 0) return;
     setState((s) => (s ? { ...s, grid: result.grid } : s));
-    setGeneratorChestAppearIndices(result.addedIndices);
-    window.setTimeout(() => setGeneratorChestAppearIndices([]), 1200);
-    if (result.addedGeneratorIds.length > 0) {
-      setRoomPurchaseToast("✨ Новый сундук с генератором появился на поле!");
-      if (purchaseToastClearRef.current) window.clearTimeout(purchaseToastClearRef.current);
-      purchaseToastClearRef.current = window.setTimeout(() => setRoomPurchaseToast(null), 3200);
+    const first = result.added[0];
+    if (first) {
+      setGeneratorUnlockFx({ ...first, fxId: Date.now() });
+      setGeneratorAppearIndices([first.targetIndex]);
+      window.setTimeout(() => setGeneratorAppearIndices([]), 1500);
+      setLenaHint({ id: Date.now(), text: `Поздравляю! Новый генератор «${first.name}» уже на поле.` });
     }
-  }, [state?.grid, progState?.level, progState?.totalOrdersCompleted, progState?.collectedItems]);
+  }, [state?.grid, progState?.level]);
 
   useEffect(() => {
     if (!progState || currentScreen !== "game" || !nextVisualUpgradeOffer) {
@@ -979,41 +1123,56 @@ export default function App() {
     setLenaHint({ id: now, text: `Открылась «${zoneName}». Заглянем в Дом и посмотрим!` });
   }, [progState?.unlockedZones, shownRoomHints]);
 
-  /** После ремонта комнаты или редкого сбоя: снова заполнить слоты заказов, если лимит позволяет. */
+  /**
+   * Держим число заказов равным числу доступных слотов.
+   *
+   * Слоты растут вместе с пулом предметов (`maxSeenItemLevel`), но пересчитывались только
+   * при сдаче заказа. Если игрок дошёл до состояния, где заказов меньше слотов, и ни одного
+   * не может выполнить, — их число так и оставалось заниженным. Здесь добираем недостающие.
+   */
   useEffect(() => {
     if (currentScreen !== "game" || !state || !progState) return;
-    if (state.orders.length !== 0) return;
-    if (!canGenerateOrdersBeforeShopPrompt(progState)) return;
+    const maxSeenNow = bumpMaxSeenItemLevelFromGrid(progState, state.grid).maxSeenItemLevel;
+    const slotsNow = activeOrderSlots(progState.level, maxSeenNow, state.grid, state.playZone);
+    if (state.orders.length >= slotsNow) return;
+
     setState((s) => {
-      if (!s || s.orders.length !== 0) return s;
+      if (!s) return s;
       const p = progStateRef.current;
-      if (!p || !canGenerateOrdersBeforeShopPrompt(p)) return s;
-      const o: Order[] = [];
+      if (!p) return s;
       const grid = s.grid;
+      const maxSeen = bumpMaxSeenItemLevelFromGrid(p, grid).maxSeenItemLevel;
+      const slots = activeOrderSlots(p.level, maxSeen, grid, s.playZone);
+      if (s.orders.length >= slots) return s;
+      const o = [...s.orders];
       let guard = 0;
-      while (o.length < MAX_ACTIVE_ORDERS && guard < 12) {
+      while (o.length < slots && guard < 12) {
         guard += 1;
-        const maxSeen = bumpMaxSeenItemLevelFromGrid(p, grid).maxSeenItemLevel;
         o.push(generateNewOrder(p.level, maxSeen, grid, s.playZone, o));
       }
-      return o.length > 0 ? { ...s, orders: o } : s;
+      return o.length > s.orders.length ? { ...s, orders: o } : s;
     });
   }, [
     currentScreen,
     state?.orders.length,
     state?.playZone,
+    state?.grid,
     progState?.level,
-    progState?.minigameOrdersAtRoomRepair,
+    progState?.maxSeenItemLevel,
   ]);
 
+  /** Реген считаем от часов, поэтому тикаем часто и дёшево — обновление стейта только когда что-то начислилось. */
   useEffect(() => {
-    const id = window.setInterval(() => {
-      setState((s) => {
-        if (!s || s.energy >= s.maxEnergy) return s;
-        return { ...s, energy: s.energy + 1, lastEnergyRegenAt: Date.now() };
-      });
-    }, ENERGY_REGEN_INTERVAL_MS);
-    return () => window.clearInterval(id);
+    const tick = () => setState((s) => (s ? withEnergyRegenFromClock(s) : s));
+    const id = window.setInterval(tick, 15000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   const resetGame = () => {
@@ -1029,7 +1188,6 @@ export default function App() {
       collectionChainRewardsClaimed: {},
       totalOrdersCompleted: 0,
       maxSeenItemLevel: 1,
-      minigameOrdersAtRoomRepair: {},
     };
     const { grid: startGrid, fieldProgress: startFieldProgress } = buildFreshPlayGrid("hall");
     const initialGameState: GameState = {
@@ -1037,7 +1195,7 @@ export default function App() {
       energy: startEnergy,
       maxEnergy: startEnergy,
       lastEnergyRegenAt: Date.now(),
-      orders: createInitialOrders(startGrid, "hall", 1, 1, initialProgState),
+      orders: createInitialOrders(startGrid, "hall", 1, 1),
       isFirstLaunch: true,
       playZone: "hall",
       fieldProgress: startFieldProgress,
@@ -1115,10 +1273,12 @@ export default function App() {
             baseProg
           );
           const capped = applyEnergyCapsForProgress(hydrated, nextProg);
-          setState({
+          // Энергия, накопленная пока игра была закрыта.
+          const withOfflineEnergy = withEnergyRegenFromClock({
             ...capped,
             energy: Math.min(capped.maxEnergy, capped.energy + energyFromChainRewards),
           });
+          setState(withOfflineEnergy);
           setProgState(nextProg);
           setOrdersCompleted(
             typeof (parsed as { ordersCompleted?: unknown }).ordersCompleted === "number"
@@ -1126,8 +1286,10 @@ export default function App() {
               : 0
           );
           setShownBeats(sb);
-          const streak = Number(localStorage.getItem(DAILY_STREAK_KEY) || "1");
-          setDailyBonusDay(Math.min(7, Math.max(1, streak)));
+          const lastBonusRaw = localStorage.getItem(LAST_DAILY_BONUS_KEY);
+          setDailyBonusDay(
+            dailyStreakDayForNextClaim(lastBonusRaw ? Number(lastBonusRaw) : null, Date.now())
+          );
           return;
         }
       }
@@ -1246,12 +1408,14 @@ export default function App() {
         newGrid[from] = emptyGridCell();
         newGrid[to] = withSyncedItemMeta(itemGridCell(nextItem.id));
         const resultLevel = "level" in nextItem ? nextItem.level : 1;
+        const mergeBonuses = new ProgressionManager(progState).getActiveBonuses();
         const opened = handleMergeFieldProgress(
           newGrid,
           state.fieldProgress,
           resultLevel,
           GRID_WIDTH,
-          GRID_HEIGHT
+          GRID_HEIGHT,
+          mergeBonuses.box_loot_chance
         );
         newGrid = opened.grid;
 
@@ -1260,6 +1424,15 @@ export default function App() {
         let progAfter = manager.getState();
         const bulk = registerCollectiblesBulk(progAfter, [nextItem.id]);
         progAfter = bulk.nextProg;
+
+        // Апгрейд «находки в ящиках»: бонусные монеты за открытый ящик.
+        if (opened.bonusLootCoins > 0) {
+          const mLoot = new ProgressionManager(progAfter);
+          mLoot.addCoins(opened.bonusLootCoins);
+          progAfter = mLoot.getState();
+          updateQuestProgress("coins", opened.bonusLootCoins);
+          pushRoomToast(`В ящике нашлись ${opened.bonusLootCoins} монет!`, 2200);
+        }
 
         let leveledUp = leveledFromMerge;
         if (opened.unlockedGeneratorItemId) {
@@ -1301,7 +1474,6 @@ export default function App() {
           ),
         });
         setSelectedCell(null);
-        setLastAction({ type: "merge", index: to });
         updateQuestProgress("merge", 1);
         playSfx("merge_pop", 0.48);
         setMergeBurstCellIndex(to);
@@ -1331,8 +1503,8 @@ export default function App() {
       const cellB = newGrid[to];
       const itemA = cellA.item;
       const itemB = cellB.item;
-      newGrid[from] = gridCellAfterPlacingItem(cellA, itemB);
-      newGrid[to] = gridCellAfterPlacingItem(cellB, itemA);
+      newGrid[from] = gridCellAfterPlacingItem(itemB);
+      newGrid[to] = gridCellAfterPlacingItem(itemA);
 
       setState({ ...state, grid: newGrid });
       setSelectedCell(null);
@@ -1352,16 +1524,14 @@ export default function App() {
 
   useEffect(() => {
     if (currentScreen !== "hub" || !progState) return;
+    // Диалог Лены и модалка бонуса не должны наезжать друг на друга.
+    if (currentBeat) return;
     const last = localStorage.getItem(LAST_DAILY_BONUS_KEY);
     const now = Date.now();
-    const eligible =
-      !last || now - Number(last) > 20 * 60 * 60 * 1000;
-    if (eligible) {
-      const streak = Number(localStorage.getItem(DAILY_STREAK_KEY) || "1");
-      setDailyBonusDay(Math.min(7, Math.max(1, streak)));
-      setShowDailyBonus(true);
-    }
-  }, [currentScreen, progState]);
+    if (last && now - Number(last) <= DAILY_BONUS_COOLDOWN_MS) return;
+    setDailyBonusDay(dailyStreakDayForNextClaim(last ? Number(last) : null, now));
+    setShowDailyBonus(true);
+  }, [currentScreen, progState, currentBeat]);
 
   const handleBackToMainMenu = useCallback(() => {
     setCoinShopOpen(false);
@@ -1407,13 +1577,31 @@ export default function App() {
     newGrid[index] = { ...cell };
     const bulk = registerCollectiblesBulk(progState, [spawnItemId]);
     playSfx("generator_tap", 0.42);
+
+    // Апгрейд «бесплатный спавн»: с шансом free_spawn_chance энергия не тратится.
+    const freeSpawn = Math.random() < new ProgressionManager(progState).getActiveBonuses().free_spawn_chance;
+    const energyCost = freeSpawn ? 0 : 1;
+
     setProgState(bumpMaxSeenItemLevelFromGrid(bulk.nextProg, newGrid));
+    const nextEnergy = Math.min(
+      state.maxEnergy,
+      Math.max(0, state.energy - energyCost) + bulk.totalEnergyFromChains
+    );
     setState({
       ...state,
       grid: newGrid,
-      energy: Math.min(state.maxEnergy, Math.max(0, state.energy - 1) + bulk.totalEnergyFromChains),
+      energy: nextEnergy,
+      // Первая трата с полной шкалы запускает отсчёт до +1 с нуля,
+      // иначе таймер унаследовал бы произвольный остаток от старой точки отсчёта.
+      lastEnergyRegenAt:
+        state.energy >= state.maxEnergy && nextEnergy < state.maxEnergy
+          ? Date.now()
+          : state.lastEnergyRegenAt,
     });
-    setLastAction({ type: "spawn", index: spawnIdx });
+    if (freeSpawn) {
+      setFreeSpawnFlashIndex(spawnIdx);
+      window.setTimeout(() => setFreeSpawnFlashIndex((cur) => (cur === spawnIdx ? null : cur)), 900);
+    }
     return true;
   };
 
@@ -1453,6 +1641,11 @@ export default function App() {
       if (selectedCell === index) {
         if (attemptGeneratorTap(index)) return;
         setSelectedCell(null);
+      } else if (canMergeGridPair(state.grid, selectedCell, index)) {
+        // Тап-в-тап слияние: раньше второй тап просто переносил выделение,
+        // из-за чего слить предметы можно было только перетаскиванием
+        // (и совсем нельзя — с клавиатуры).
+        applyGridPairInteraction(selectedCell, index);
       } else {
         const otherId = state.grid[index].item;
         if (otherId !== null) {
@@ -1474,184 +1667,160 @@ export default function App() {
     [state, progState, applyGridPairInteraction]
   );
 
+  /**
+   * Сдача заказа. Считаем всё заранее по текущему состоянию и только потом пишем стейт:
+   * раньше вычисления жили внутри апдейтера `setState`, который React вправе вызвать повторно
+   * (StrictMode, прерванный конкурентный рендер) — из-за этого дублировался прогресс квестов.
+   */
   const handleCompleteOrder = (orderId: string, orderInstanceId: string, anchorRect?: DOMRect) => {
     if (!state || !progState) return;
 
-    type FulfilledMeta = {
-      finalProg: ProgressionState;
-      finalCoins: number;
-      flyOrderId: string;
-      orderCoinDoubled: boolean;
-      anyLevelUp: boolean;
-    };
-    let fulfilledMeta: FulfilledMeta | null = null;
-    let orderFieldOpen: MergeFieldProgressResult | null = null;
+    const prev = state;
+    const prog = progState;
 
-    flushSync(() => {
-      setState((prev) => {
-        if (!prev) return prev;
-        const prog = progStateRef.current;
-        if (!prog) return prev;
+    const orderIndex = prev.orders.findIndex((o) => o.instanceId === orderInstanceId);
+    if (orderIndex < 0) return;
+    const order = prev.orders[orderIndex];
+    if (!order || order.id !== orderId || orderIsFulfilled(order)) return;
+    if (!orderAllRemainingSatisfiedFromGrid(prev.grid, prev.orders, orderIndex)) return;
 
-        const orderIndex = prev.orders.findIndex((o) => o.instanceId === orderInstanceId);
-        if (orderIndex < 0) return prev;
-        const order = prev.orders[orderIndex];
-        if (!order || order.id !== orderId || orderIsFulfilled(order)) return prev;
+    const clearIdx = collectIndicesForFullOrderDelivery(prev.grid, prev.orders, orderIndex);
+    if (clearIdx.length === 0) return;
 
-        if (!orderAllRemainingSatisfiedFromGrid(prev.grid, order)) return prev;
+    const gridAfterPickup = [...prev.grid];
+    for (const i of clearIdx) gridAfterPickup[i] = emptyGridCell();
 
-        const clearIdx = collectIndicesForFullOrderDelivery(prev.grid, order);
-        if (clearIdx.length === 0) return prev;
-
-        const newGrid = [...prev.grid];
-        for (const i of clearIdx) newGrid[i] = emptyGridCell();
-        const gridAfterPickup = newGrid;
-
-        const requiredById = new Map<string, number>();
-        for (const r of order.requirements) {
-          requiredById.set(r.itemId, (requiredById.get(r.itemId) ?? 0) + r.count);
-        }
-        const deliveredComplete: Partial<Record<string, number>> = {};
-        for (const [id, c] of requiredById) {
-          deliveredComplete[id] = c;
-        }
-        const finalized: Order = { ...order, delivered: deliveredComplete };
-        if (!orderIsFulfilled(finalized)) return prev;
-
-        const newOrders = prev.orders.filter((_, i) => i !== orderIndex);
-        const afterCountProg = withIncrementOrderCounter(prog);
-        const maxSeenForOrder = bumpMaxSeenItemLevelFromGrid(afterCountProg, gridAfterPickup).maxSeenItemLevel;
-        if (canGenerateOrdersBeforeShopPrompt(afterCountProg)) {
-          newOrders.push(
-            generateNewOrder(afterCountProg.level, maxSeenForOrder, gridAfterPickup, prev.playZone, newOrders)
-          );
-        }
-
-        const manager = new ProgressionManager(afterCountProg);
-        const orderBonuses = manager.getActiveBonuses();
-
-        let finalCoins = Math.round(order.rewardCoins * (1 + orderBonuses.income_bonus));
-        let orderCoinDoubled = false;
-        if (Math.random() < orderBonuses.bonus_chance) {
-          finalCoins *= 2;
-          orderCoinDoubled = true;
-        }
-
-        const { leveledUp } = manager.addXp(order.rewardXp);
-        manager.addCoins(finalCoins);
-        let afterOrder = manager.getState();
-
-        const { reconstruction: rNext, completed: reconDone } = tickReconstructionAfterOrderComplete(
-          afterOrder.reconstruction
-        );
-        let finalProg = { ...afterOrder, reconstruction: rNext };
-        let anyLevelUp = leveledUp;
-        if (reconDone) {
-          const m2 = new ProgressionManager(finalProg);
-          m2.addCoins(reconDone.rewardCoins);
-          const xr = m2.addXp(reconDone.rewardXp);
-          anyLevelUp = anyLevelUp || xr.leveledUp;
-          const st = m2.getState();
-          const uz = [...st.unlockedZones];
-          for (const z of reconDone.unlockZones ?? []) {
-            if (!uz.includes(z)) uz.push(z);
-          }
-          finalProg = { ...st, unlockedZones: uz, reconstruction: rNext };
-          updateQuestProgress("coins", reconDone.rewardCoins);
-        }
-
-        const newTotal = (prog.totalOrdersCompleted ?? 0) + 1;
-        finalProg = { ...finalProg, totalOrdersCompleted: newTotal };
-        finalProg = bumpMaxSeenItemLevelFromGrid(finalProg, gridAfterPickup);
-
-        fulfilledMeta = {
-          finalProg,
-          finalCoins,
-          flyOrderId: order.id,
-          orderCoinDoubled,
-          anyLevelUp,
-        };
-
-        const fieldOrder = handleOrderFieldProgress(
-          gridAfterPickup,
-          prev.fieldProgress,
-          GRID_WIDTH,
-          GRID_HEIGHT
-        );
-        orderFieldOpen = fieldOrder;
-
-        return {
-          ...prev,
-          grid: fieldOrder.grid,
-          fieldProgress: fieldOrder.fieldProgress,
-          orders: newOrders,
-          energy: anyLevelUp
-            ? prev.maxEnergy
-            : Math.min(prev.maxEnergy, prev.energy + ENERGY_ORDER_COMPLETE_BONUS),
-        };
-      });
-    });
-
-    if (!fulfilledMeta) return;
-
-    if (orderFieldOpen) {
-      if (orderFieldOpen.unlockedGeneratorItemId) {
-        const gDef = ALL_ITEMS[orderFieldOpen.unlockedGeneratorItemId];
-        const chId = gDef && itemIsGenerator(gDef) ? gDef.spawnsChainId : null;
-        const chName = chId ? ITEM_CHAINS[chId]?.name : null;
-        setRoomPurchaseToast(
-          chName
-            ? `🎉 Новый источник предметов! Открыт «${chName}». Предметы под паутиной обновились.`
-            : "🎉 Новый источник предметов! Предметы под паутиной обновились."
-        );
-        window.setTimeout(() => setRoomPurchaseToast(null), 3600);
-        if (orderFieldOpen.zoneJustCompleted) {
-          window.setTimeout(() => {
-            setRoomPurchaseToast(`Зона «${orderFieldOpen.zoneJustCompleted!.name}» полностью открыта!`);
-            window.setTimeout(() => setRoomPurchaseToast(null), 3200);
-          }, 3800);
-        }
-      } else if (orderFieldOpen.zoneJustCompleted) {
-        setRoomPurchaseToast(`Зона «${orderFieldOpen.zoneJustCompleted.name}» полностью открыта!`);
-        window.setTimeout(() => setRoomPurchaseToast(null), 3200);
-      }
-      if (orderFieldOpen.openedCellIndices.length > 0) {
-        const heavy = Boolean(orderFieldOpen.unlockedGeneratorItemId);
-        setCellUnlockHeavyFlash(heavy);
-        setCellUnlockedFlashIndices(orderFieldOpen.openedCellIndices);
-        window.setTimeout(() => {
-          setCellUnlockedFlashIndices([]);
-          setCellUnlockHeavyFlash(false);
-        }, heavy ? 920 : 450);
-      }
+    const newOrders = prev.orders.filter((_, i) => i !== orderIndex);
+    const maxSeenForOrder = bumpMaxSeenItemLevelFromGrid(prog, gridAfterPickup).maxSeenItemLevel;
+    const orderSlots = activeOrderSlots(prog.level, maxSeenForOrder, gridAfterPickup, prev.playZone);
+    let refillGuard = 0;
+    while (newOrders.length < orderSlots && refillGuard < 12) {
+      refillGuard += 1;
+      newOrders.push(generateNewOrder(prog.level, maxSeenForOrder, gridAfterPickup, prev.playZone, newOrders));
     }
 
-    if (fulfilledMeta.orderCoinDoubled) {
+    const manager = new ProgressionManager(prog);
+    const orderBonuses = manager.getActiveBonuses();
+
+    let finalCoins = Math.round(order.rewardCoins * (1 + orderBonuses.income_bonus));
+    let orderCoinDoubled = false;
+    if (Math.random() < orderBonuses.bonus_chance) {
+      finalCoins *= 2;
+      orderCoinDoubled = true;
+    }
+
+    const { leveledUp } = manager.addXp(order.rewardXp);
+    manager.addCoins(finalCoins);
+    const afterOrder = manager.getState();
+
+    const { reconstruction: rNext, completed: reconDone } = tickReconstructionAfterOrderComplete(
+      afterOrder.reconstruction
+    );
+    let finalProg: ProgressionState = { ...afterOrder, reconstruction: rNext };
+    let anyLevelUp = leveledUp;
+    let reconCoins = 0;
+    if (reconDone) {
+      const m2 = new ProgressionManager(finalProg);
+      m2.addCoins(reconDone.rewardCoins);
+      const xr = m2.addXp(reconDone.rewardXp);
+      anyLevelUp = anyLevelUp || xr.leveledUp;
+      const st = m2.getState();
+      const uz = [...st.unlockedZones];
+      for (const z of reconDone.unlockZones ?? []) {
+        if (!uz.includes(z)) uz.push(z);
+      }
+      finalProg = { ...st, unlockedZones: uz, reconstruction: rNext };
+      reconCoins = reconDone.rewardCoins;
+    }
+
+    const fieldOrder = handleOrderFieldProgress(
+      gridAfterPickup,
+      prev.fieldProgress,
+      GRID_WIDTH,
+      GRID_HEIGHT,
+      orderBonuses.box_loot_chance
+    );
+
+    // Апгрейд «находки в ящиках».
+    if (fieldOrder.bonusLootCoins > 0) {
+      const mLoot = new ProgressionManager(finalProg);
+      mLoot.addCoins(fieldOrder.bonusLootCoins);
+      finalProg = mLoot.getState();
+    }
+
+    finalProg = { ...finalProg, totalOrdersCompleted: (prog.totalOrdersCompleted ?? 0) + 1 };
+    finalProg = bumpMaxSeenItemLevelFromGrid(finalProg, fieldOrder.grid);
+
+    // Заказ возвращает немного энергии — иначе поле упирается в реген и сессия обрывается.
+    const energyAfter = anyLevelUp
+      ? prev.maxEnergy
+      : Math.min(prev.maxEnergy, prev.energy + ENERGY_ORDER_COMPLETE_BONUS);
+
+    progStateRef.current = finalProg;
+    setProgState(finalProg);
+    setState({
+      ...prev,
+      grid: fieldOrder.grid,
+      fieldProgress: fieldOrder.fieldProgress,
+      orders: newOrders,
+      energy: energyAfter,
+    });
+
+    if (fieldOrder.unlockedGeneratorItemId) {
+      const gDef = ALL_ITEMS[fieldOrder.unlockedGeneratorItemId];
+      const chId = gDef && itemIsGenerator(gDef) ? gDef.spawnsChainId : null;
+      const chName = chId ? ITEM_CHAINS[chId]?.name : null;
+      setRoomPurchaseToast(
+        chName
+          ? `🎉 Новый источник предметов! Открыт «${chName}». Предметы под паутиной обновились.`
+          : "🎉 Новый источник предметов! Предметы под паутиной обновились."
+      );
+      window.setTimeout(() => setRoomPurchaseToast(null), 3600);
+      if (fieldOrder.zoneJustCompleted) {
+        const zoneName = fieldOrder.zoneJustCompleted.name;
+        window.setTimeout(() => {
+          setRoomPurchaseToast(`Зона «${zoneName}» полностью открыта!`);
+          window.setTimeout(() => setRoomPurchaseToast(null), 3200);
+        }, 3800);
+      }
+    } else if (fieldOrder.zoneJustCompleted) {
+      setRoomPurchaseToast(`Зона «${fieldOrder.zoneJustCompleted.name}» полностью открыта!`);
+      window.setTimeout(() => setRoomPurchaseToast(null), 3200);
+    } else if (fieldOrder.bonusLootCoins > 0) {
+      pushRoomToast(`В ящике нашлись ${fieldOrder.bonusLootCoins} монет!`, 2200);
+    }
+
+    if (fieldOrder.openedCellIndices.length > 0) {
+      const heavy = Boolean(fieldOrder.unlockedGeneratorItemId);
+      setCellUnlockHeavyFlash(heavy);
+      setCellUnlockedFlashIndices(fieldOrder.openedCellIndices);
+      window.setTimeout(
+        () => {
+          setCellUnlockedFlashIndices([]);
+          setCellUnlockHeavyFlash(false);
+        },
+        heavy ? 920 : 450
+      );
+    }
+
+    if (orderCoinDoubled) {
       setShowOrderCoinBonus(true);
       window.setTimeout(() => setShowOrderCoinBonus(false), 1500);
     }
-
-    if (fulfilledMeta.anyLevelUp) {
-      triggerLevelUp();
-    }
-
-    progStateRef.current = fulfilledMeta.finalProg;
-    setProgState(fulfilledMeta.finalProg);
-    setLastAction({ type: "order" });
+    if (anyLevelUp) triggerLevelUp();
     setOrdersCompleted((c) => c + 1);
     updateQuestProgress("order", 1);
-    updateQuestProgress("coins", fulfilledMeta.finalCoins);
+    updateQuestProgress("coins", finalCoins + reconCoins + fieldOrder.bonusLootCoins);
     playSfx("order_complete", 0.52);
     if (anchorRect) {
-      const n = 7;
       setCoinFlyBurst({
         id: Date.now(),
         cx: anchorRect.left + anchorRect.width / 2,
         cy: anchorRect.top + anchorRect.height / 2,
-        count: n,
+        count: 7,
       });
     } else {
-      setCoinFly({ source: "order", orderId: fulfilledMeta.flyOrderId, amount: fulfilledMeta.finalCoins });
+      setCoinFly({ source: "order", orderId: order.id, amount: finalCoins });
       window.setTimeout(() => setCoinFly(null), 800);
     }
   };
@@ -1716,10 +1885,7 @@ export default function App() {
 
     if (success) {
       const u = UPGRADES.find((x) => x.id === upgradeId);
-      let nextProg = newProg;
-      if (u && u.effectType === "visual") {
-        nextProg = withResetOrderCounter(nextProg);
-      }
+      const nextProg = newProg;
       const bonuses = new ProgressionManager(nextProg).getActiveBonuses();
       const refillGameOrders = Boolean(u && u.effectType === "visual" && currentScreenRef.current === "game");
       setProgState(nextProg);
@@ -1728,8 +1894,11 @@ export default function App() {
         let orders = s.orders;
         if (refillGameOrders) {
           const o = [...s.orders];
-          while (o.length < MAX_ACTIVE_ORDERS) {
-            const maxSeen = bumpMaxSeenItemLevelFromGrid(nextProg, s.grid).maxSeenItemLevel;
+          const maxSeen = bumpMaxSeenItemLevelFromGrid(nextProg, s.grid).maxSeenItemLevel;
+          const slots = activeOrderSlots(nextProg.level, maxSeen, s.grid, s.playZone);
+          let guard = 0;
+          while (o.length < slots && guard < 12) {
+            guard += 1;
             o.push(generateNewOrder(nextProg.level, maxSeen, s.grid, s.playZone, o));
           }
           orders = o;
@@ -1739,10 +1908,6 @@ export default function App() {
       updateQuestProgress("upgrade", 1);
       sounds.purchase();
       setPurchaseSparkleNonce((n) => n + 1);
-      if (u && u.effectType === "visual") {
-        const azDone = upgradeZoneToActiveZone(u.zone);
-        if (azDone) setHubHighlightZone((hz) => (hz === azDone ? null : hz));
-      }
       if (currentScreenRef.current === "room") {
         if (purchaseToastClearRef.current) {
           window.clearTimeout(purchaseToastClearRef.current);
@@ -1789,31 +1954,25 @@ export default function App() {
   };
 
   const handleClaimDaily = (coins: number, energy: number) => {
-    const last = localStorage.getItem(LAST_DAILY_BONUS_KEY);
+    const lastRaw = localStorage.getItem(LAST_DAILY_BONUS_KEY);
+    const last = lastRaw ? Number(lastRaw) : null;
     const now = Date.now();
-    if (last && now - Number(last) <= 20 * 60 * 60 * 1000) return;
+    if (last && now - last <= DAILY_BONUS_COOLDOWN_MS) return;
     if (!progState || !state) return;
+
+    const claimedDay = dailyStreakDayForNextClaim(last, now);
+
     const manager = new ProgressionManager(progState);
     manager.addCoins(coins);
     setProgState(manager.getState());
-    setState((s) =>
-      s
-        ? {
-            ...s,
-            energy: Math.min(s.maxEnergy, s.energy + energy),
-          }
-        : s
-    );
+    setState((s) => (s ? { ...s, energy: Math.min(s.maxEnergy, s.energy + energy) } : s));
     try {
-      localStorage.setItem(LAST_DAILY_BONUS_KEY, String(Date.now()));
-      let streak = Number(localStorage.getItem(DAILY_STREAK_KEY) || "1");
-      streak += 1;
-      if (streak > 7) streak = 1;
-      localStorage.setItem(DAILY_STREAK_KEY, String(streak));
-      setDailyBonusDay(Math.min(7, Math.max(1, streak)));
+      localStorage.setItem(LAST_DAILY_BONUS_KEY, String(now));
+      localStorage.setItem(DAILY_STREAK_KEY, String(claimedDay));
     } catch {
       /* ignore */
     }
+    setDailyBonusDay(claimedDay);
     setShowDailyBonus(false);
   };
 
@@ -1857,27 +2016,23 @@ export default function App() {
     }
   };
 
-  const handleOnboardingComplete = () => {
-    setShownBeats((sb) =>
-      sb.includes("onboarding_done") ? sb : [...sb, "onboarding_done"]
-    );
-  };
-
   /** Из главного меню: экран «Дом» (хаб), состояние игры не трогаем. */
   const handleContinueFromMenu = useCallback(() => {
     setCurrentScreen("hub");
   }, []);
 
   const handleNewGame = useCallback(() => {
-    if (!window.confirm("Ты уверен? Весь прогресс будет сброшен.")) return;
+    // Спрашиваем только если есть что терять: на пустом старте кнопка называется «Начать игру».
+    const hasProgress =
+      saveLoadedFromDisk || ordersCompleted > 0 || (progState?.level ?? 1) > 1 || (progState?.coins ?? 0) > 0;
+    if (hasProgress && !window.confirm("Ты уверен? Весь прогресс будет сброшен.")) return;
     setSaveLoadedFromDisk(false);
     resetGame();
     setCurrentScreen("hub");
-  }, [devMode]);
+  }, [devMode, saveLoadedFromDisk, ordersCompleted, progState?.level, progState?.coins]);
 
-  /** С экрана «Дом» в миниигру; туториал при первом входе на поле. */
+  /** С экрана «Дом» в миниигру; на первом запуске показываем короткий центральный туториал. */
   const handlePlayFromHub = useCallback(() => {
-    setHubHighlightZone(null);
     setHubPulsePlayButton(false);
     setCurrentScreen("game");
     if (state?.isFirstLaunch) {
@@ -1901,11 +2056,17 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [currentScreen]);
 
+  const energyAdCooldownMs = useMemo(() => {
+    void gameEnergyMsTick;
+    if (lastEnergyAdAt <= 0) return 0;
+    return Math.max(0, ENERGY_AD_COOLDOWN_MS - (Date.now() - lastEnergyAdAt));
+  }, [lastEnergyAdAt, gameEnergyMsTick]);
+
   const msUntilNextEnergy = useMemo(() => {
     if (!state || state.energy >= state.maxEnergy) return 0;
     void gameEnergyMsTick;
     const elapsed = Date.now() - state.lastEnergyRegenAt;
-    return ENERGY_REGEN_INTERVAL_MS - (elapsed % ENERGY_REGEN_INTERVAL_MS);
+    return Math.max(0, ENERGY_REGEN_INTERVAL_MS - elapsed);
   }, [state, gameEnergyMsTick]);
 
   if (!state || !progState) {
@@ -2000,8 +2161,6 @@ export default function App() {
             xpProgressPercent={progress}
             unlockedZones={hubUnlockedZones}
             purchasedUpgrades={progState.purchasedUpgrades}
-            currentPlayZone={state.playZone}
-            repairNudgeZone={hubHighlightZone}
             hubOrdersToast={hubOrdersBackToast}
             pulsePlayButton={hubPulsePlayButton}
             onNavigateRoom={(zone) => {
@@ -2010,18 +2169,18 @@ export default function App() {
                 window.clearTimeout(purchaseToastClearRef.current);
                 purchaseToastClearRef.current = null;
               }
-              if (hubHighlightZone === zone) setHubHighlightZone(null);
               setActiveZone(zone);
               setCurrentScreen("room");
             }}
-            dailyQuestCompleted={questBanner.completed}
-            dailyQuestTotal={questBanner.total}
             dailyUnclaimedCount={questBanner.unclaimedCount}
             onOpenDaily={() => setCurrentScreen("daily")}
             onOpenCoinShop={() => setCoinShopOpen(true)}
             onOpenCollection={() => setCurrentScreen("collection")}
             onBackToMenu={handleBackToMainMenu}
             onPlay={handlePlayFromHub}
+            reconstruction={progState.reconstruction}
+            canDeliverReconstructionItem={canDeliverReconstructionItem(progState.reconstruction, state.grid)}
+            onDeliverReconstructionItem={handleReconstructionDeliver}
           />
           <CoinShopModal
             open={coinShopOpen}
@@ -2091,23 +2250,20 @@ export default function App() {
           onOpenTutorial={() => setShowTutorial(true)}
           mergePopIndex={cellMergePopIndex}
           cellUnlockedFlashIndices={cellUnlockedFlashIndices}
-          generatorChestAppearIndices={generatorChestAppearIndices}
+          generatorAppearIndices={generatorAppearIndices}
+          generatorUnlockFx={generatorUnlockFx}
+          onDismissGeneratorUnlockFx={() => setGeneratorUnlockFx(null)}
           cellUnlockHeavyFlash={cellUnlockHeavyFlash}
           cellShakePair={cellShakePair}
           coinFly={coinFly}
           mergeBurstCellIndex={mergeBurstCellIndex}
+          freeSpawnFlashIndex={freeSpawnFlashIndex}
           gridWidth={GRID_WIDTH}
           gridHeight={GRID_HEIGHT}
-          minigameOrdersCompletedAtRoom={globalOrderCounter(progState)}
-          maxMinigameOrdersAtRoom={maxOrdersBeforeShopPrompt(progState.level)}
-          ordersExhausted={state.orders.length === 0 && !canGenerateOrdersBeforeShopPrompt(progState)}
-          nextRepairCost={nextVisualUpgradeOffer?.cost ?? null}
-          playerCoins={progState.coins}
-          onOrdersExhaustedGoHome={handleOrdersExhaustedGoHome}
-          onSessionExitHome={handleSessionExitHome}
           isNoMoves={isNoMoves}
           onNoMovesExitHome={handleNoMovesExitHome}
           onWatchAdEnergy={handleWatchAdEnergy}
+          energyAdCooldownMs={energyAdCooldownMs}
           lenaHint={lenaHint}
         />
       )}
@@ -2125,26 +2281,14 @@ export default function App() {
         />
       ) : null}
 
-      {currentScreen === "game" &&
-      progState.level === 1 &&
-      !shownBeats.includes("onboarding_done") ? (
-        <OnboardingOverlay onComplete={handleOnboardingComplete} />
-      ) : null}
-
-      {/* Туториал только в игре, не над главным меню */}
-      <AnimatePresence>
-        {currentScreen === "game" && showTutorial && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(92,61,34,0.45)] p-4"
-          >
-            <motion.div
-              initial={{ scale: 0.96, y: 12, opacity: 0 }}
-              animate={{ scale: 1, y: 0, opacity: 1 }}
-              className="ds-card w-full max-w-xs p-6 text-center"
-            >
+      {/*
+        Туториал только в игре, не над главным меню.
+        Без AnimatePresence намеренно: exit-анимация не завершалась, узел оставался в DOM
+        с opacity: 0 и pointer-events: auto и полностью блокировал нажатия по полю.
+      */}
+      {currentScreen === "game" && showTutorial ? (
+        <div className="modal-fade-in fixed inset-0 z-50 flex items-center justify-center bg-[rgba(92,61,34,0.45)] p-4">
+          <div className="modal-pop-in ds-card w-full max-w-xs p-6 text-center">
               <div
                 className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-[14px] border"
                 style={{ background: "var(--c-peach)", borderColor: "var(--c-peach2)" }}
@@ -2163,7 +2307,8 @@ export default function App() {
                     1
                   </div>
                   <p>
-                    Нажми на <b>корзину 🧺</b> — рядом появится предмет 1 уровня, пока на клетке есть заряды.
+                    Нажми на <b>генератор</b> (в зале это 🛎️) — рядом появится предмет 1 уровня. Каждая выдача
+                    тратит <b>1 энергии</b>.
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -2174,7 +2319,8 @@ export default function App() {
                     2
                   </div>
                   <p>
-                    Объединяй <b>одинаковые</b> предметы, чтобы получить новый уровень!
+                    Соединяй <b>одинаковые</b> предметы — перетащи один на другой или нажми на оба по очереди.
+                    Получится предмет следующего уровня.
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -2185,17 +2331,16 @@ export default function App() {
                     3
                   </div>
                   <p>
-                    Выполняй <b>Заказы</b> сверху, чтобы получать монеты и опыт.
+                    Собери всё для <b>заказа</b> сверху и жми «Отдать» — это монеты, опыт и новые клетки поля.
                   </p>
                 </div>
               </div>
-              <button type="button" onClick={() => setShowTutorial(false)} className="ds-btn-primary w-full">
-                Понятно
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <button type="button" onClick={() => setShowTutorial(false)} className="ds-btn-primary w-full">
+              Понятно
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {showLevelUpFlash ? (
         <div
@@ -2207,10 +2352,12 @@ export default function App() {
       {/* Level Up Effect */}
       <AnimatePresence>
         {showLevelUp && (
-          <motion.div 
+          <motion.div
+            key="levelup-overlay"
             initial={{ opacity: 0, scale: 0.5, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 1.5 }}
+            transition={{ duration: 0.25 }}
             className="fixed inset-0 z-[60] flex items-center justify-center pointer-events-none"
           >
             <div

@@ -4,7 +4,7 @@ import { HUB_ZONES } from "./progressionData";
 import { ZONE_TO_MERGE_CHAIN_ID } from "./roomMergeCatalog";
 import { computeMaxSeenMergeableLevelFromGrid } from "./utils/sessionGridProgress";
 
-/** Порядок секций коллекции — как список комнат на хабе «Дом», затем остальные цепочки (fruit, sweets, …). */
+/** Порядок секций коллекции — как список комнат на хабе «Дом». */
 export function collectionChainsInHubOrder(): ItemChain[] {
   const seen = new Set<string>();
   const ordered: ItemChain[] = [];
@@ -26,8 +26,6 @@ export function collectionChainsInHubOrder(): ItemChain[] {
 
 /** Награда за полный сбор цепочки (из `ITEM_CHAINS`). Ориентир — порядок цен мебели в комнате. */
 export const CHAIN_COMPLETE_REWARDS: Record<string, { coins: number; energy: number }> = {
-  fruit: { coins: 140, energy: 10 },
-  sweets: { coins: 140, energy: 10 },
   hall_tea: { coins: 180, energy: 10 },
   kitchen_meal: { coins: 260, energy: 12 },
   bedroom_cozy: { coins: 340, energy: 14 },
@@ -60,15 +58,10 @@ export function normalizeCollectionFields(prog: ProgressionState): ProgressionSt
   const cr = prog.collectionChainRewardsClaimed;
   const toc = prog.totalOrdersCompleted;
   const msl = prog.maxSeenItemLevel;
-  const mor = prog.minigameOrdersAtRoomRepair;
   return {
     ...prog,
     maxSeenItemLevel:
       typeof msl === "number" && Number.isFinite(msl) && msl >= 1 ? Math.floor(msl) : 1,
-    minigameOrdersAtRoomRepair:
-      mor && typeof mor === "object" && !Array.isArray(mor)
-        ? (mor as ProgressionState["minigameOrdersAtRoomRepair"])
-        : {},
     totalOrdersCompleted: typeof toc === "number" && Number.isFinite(toc) ? Math.max(0, Math.floor(toc)) : 0,
     collectedItems:
       ci && typeof ci === "object" && !Array.isArray(ci)

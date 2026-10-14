@@ -2,7 +2,6 @@
  * Стартовый экран «Кафе Лены»: типографика Playfair Display + Lora, портрет Лены (public/avatars/lena_neutral.png).
  */
 
-import React from "react";
 import { useUiScaling } from "../hooks/useUiScaling";
 
 export interface StartScreenSaveInfo {
@@ -40,7 +39,7 @@ export default function StartScreen({
         : `Сохранено ${Math.round(saveAgeMinutes)} мин назад`
       : null;
 
-  const { containerRef, uiScale, scalingStyle } = useUiScaling();
+  const { containerRef, scalingStyle } = useUiScaling();
 
   return (
     <div className="ss-root">

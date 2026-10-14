@@ -2,14 +2,16 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
+import type React from "react";
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { useUiScaling } from "../hooks/useUiScaling";
 import { CircleAlert, Coins, HelpCircle } from "lucide-react";
 import {
   ALL_ITEMS,
+  ITEM_CHAINS,
   isCobwebUnknownPlaceholder,
   isBlockedCellType,
   isOpenCellType,
@@ -22,6 +24,7 @@ import {
   type ProgressionState,
   type CoinFlyState,
 } from "../types";
+import { ROOM_GENERATOR_DEFS } from "../roomMergeCatalog";
 import GameSelectionInfoModal from "../components/GameSelectionInfoModal";
 import { FieldDialogProvider, useFieldDialog } from "../components/FieldDialogPanel";
 import { getFieldLine } from "../fieldDialogs";
@@ -29,9 +32,15 @@ import { GameHeader } from "../components/GameHeader";
 import OrderItemInfoModal from "../components/OrderItemInfoModal";
 import MergeBurstParticles from "../components/MergeBurstParticles";
 import { OrderCard } from "../components/OrderCard";
+import { ItemIcon } from "../components/ItemIcon";
 import { ENERGY_AD_REWARD } from "../gameBalance";
 
 const GRID_DRAG_THRESHOLD_PX = 12;
+
+function formatCooldown(ms: number): string {
+  const total = Math.ceil(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
 
 /** px-0.5 у ряда сетки + рамка p-1 + border ~1px с каждой стороны (горизонтальный «хром» вокруг клеток) */
 const GRID_WRAP_CHROME_PX = 14;
@@ -77,32 +86,27 @@ export interface GameScreenProps {
   mergePopIndex: number | null;
   /** Краткая подсветка соседних клеток после снятия препятствия */
   cellUnlockedFlashIndices?: number[];
-  /** Новые сундуки-генераторы: pop-анимация при появлении на поле. */
-  generatorChestAppearIndices?: number[];
+  /** Новые генераторы: pop-анимация клетки при появлении на поле. */
+  generatorAppearIndices?: number[];
+  /** Поздравление и эмодзи-перелёт нового генератора в целевую клетку. */
+  generatorUnlockFx?: { fxId: number; id: string; emoji: string; name: string; targetIndex: number } | null;
+  onDismissGeneratorUnlockFx?: () => void;
   /** Усиленная вспышка (открытие ящика с генератором). */
   cellUnlockHeavyFlash?: boolean;
   cellShakePair: [number, number] | null;
   coinFly: CoinFlyState | null;
   /** Ячейка слияния — частицы в portal */
   mergeBurstCellIndex?: number | null;
+  /** Клетка, куда предмет выпал без траты энергии (апгрейд «бесплатный спавн»). */
+  freeSpawnFlashIndex?: number | null;
   gridWidth: number;
   gridHeight: number;
-  /** Лимит заказов миниигры для текущей комнаты (ремонт в хабе). */
-  minigameOrdersCompletedAtRoom: number;
-  maxMinigameOrdersAtRoom: number;
-  /** Нет активных заказов и лимит исчерпан — показать заглушку «в хаб». */
-  ordersExhausted: boolean;
-  /** Стоимость следующего визуального ремонта в текущей комнате; null — всё куплено. */
-  nextRepairCost: number | null;
-  /** Монеты игрока (для подсказки на заглушке). */
-  playerCoins: number;
-  /** Из заглушки исчерпанных заказов — хаб с подсветкой комнаты. */
-  onOrdersExhaustedGoHome: () => void;
-  onSessionExitHome: () => void;
   isNoMoves: boolean;
   onNoMovesExitHome: () => void;
-  /** Заглушка рекламы: +энергия (в проде — SDK). */
+  /** Награда за рекламу: +энергия (через AbstractAdService). */
   onWatchAdEnergy: () => void;
+  /** Сколько ещё ждать до следующей рекламы за энергию (мс); 0 — доступна. */
+  energyAdCooldownMs: number;
   /** Редкие подсказки от Лены (покупка/новая комната). */
   lenaHint: { id: number; text: string } | null;
 }
@@ -122,31 +126,26 @@ function GameScreenContent({
   selectedCell,
   mergePopIndex,
   cellUnlockedFlashIndices = [],
-  generatorChestAppearIndices = [],
+  generatorAppearIndices = [],
+  generatorUnlockFx = null,
+  onDismissGeneratorUnlockFx,
   cellUnlockHeavyFlash = false,
   cellShakePair,
   coinFly,
   mergeBurstCellIndex = null,
+  freeSpawnFlashIndex = null,
   gridWidth,
   gridHeight,
-  minigameOrdersCompletedAtRoom,
-  maxMinigameOrdersAtRoom,
-  ordersExhausted,
-  nextRepairCost,
-  playerCoins,
-  onOrdersExhaustedGoHome,
-  onSessionExitHome,
   isNoMoves,
   onNoMovesExitHome,
   onWatchAdEnergy,
+  energyAdCooldownMs,
   lenaHint,
 }: GameScreenProps) {
   const [selectionInfoOpen, setSelectionInfoOpen] = useState(false);
   const [orderItemInfoId, setOrderItemInfoId] = useState<string | null>(null);
-  const [roomOrderBarFlash, setRoomOrderBarFlash] = useState(false);
-  const prevRoomOrderRatioRef = useRef<number>(0);
   const [cellSize, setCellSize] = useState(36);
-  const { containerRef: gameColumnRef, uiScale, scalingStyle } = useUiScaling();
+  const { containerRef: gameColumnRef, scalingStyle } = useUiScaling();
 
   // Вычисляем размер ячейки по ширине колонки
   useLayoutEffect(() => {
@@ -164,24 +163,10 @@ function GameScreenContent({
     return () => ro.disconnect();
   }, [gridWidth, gameColumnRef]);
 
-  const roomOrderRatio =
-    maxMinigameOrdersAtRoom > 0 ? minigameOrdersCompletedAtRoom / maxMinigameOrdersAtRoom : 0;
-  useEffect(() => {
-    if (maxMinigameOrdersAtRoom <= 0) return;
-    const prev = prevRoomOrderRatioRef.current;
-    prevRoomOrderRatioRef.current = roomOrderRatio;
-    if (roomOrderRatio >= 1 && prev < 1) {
-      setRoomOrderBarFlash(true);
-      const t = window.setTimeout(() => setRoomOrderBarFlash(false), 700);
-      return () => window.clearTimeout(t);
-    }
-  }, [roomOrderRatio, maxMinigameOrdersAtRoom]);
-
   const { showPanel } = useFieldDialog();
   const prevLevelForDialogRef = useRef(progState.level);
   const enteredRoomZoneRef = useRef<string | null>(null);
   const noMovesDialogShownRef = useRef(false);
-  const prevSessionOrderRatioRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (progState.level > prevLevelForDialogRef.current) {
@@ -239,6 +224,17 @@ function GameScreenContent({
     });
   }, [lenaHint, showPanel]);
 
+  const generatorChainItems = (() => {
+    if (!generatorUnlockFx) return [];
+    const def = ROOM_GENERATOR_DEFS[generatorUnlockFx.id];
+    const chain = def ? ITEM_CHAINS[def.spawnsChainId] : null;
+    if (!chain) return [];
+    return chain.items
+      .filter((it) => "level" in it)
+      .sort((a, b) => ("level" in a && "level" in b ? a.level - b.level : 0))
+      .slice(0, 7);
+  })();
+
   useEffect(() => {
     if (!isNoMoves) {
       noMovesDialogShownRef.current = false;
@@ -256,31 +252,6 @@ function GameScreenContent({
       });
     }
   }, [isNoMoves, showPanel]);
-
-  const sessionOrderRatio =
-    maxMinigameOrdersAtRoom > 0
-      ? minigameOrdersCompletedAtRoom / maxMinigameOrdersAtRoom
-      : 0;
-  useEffect(() => {
-    if (maxMinigameOrdersAtRoom <= 0) return;
-    const prev = prevSessionOrderRatioRef.current;
-    if (prev === null) {
-      prevSessionOrderRatioRef.current = sessionOrderRatio;
-      return;
-    }
-    prevSessionOrderRatioRef.current = sessionOrderRatio;
-    if (sessionOrderRatio >= 1 && prev < 1) {
-      const line = getFieldLine("session_complete");
-      if (line) {
-        showPanel({
-          npc: line.npc,
-          emotion: "happy",
-          text: line.text,
-          duration: 5800,
-        });
-      }
-    }
-  }, [sessionOrderRatio, maxMinigameOrdersAtRoom, showPanel]);
 
   /** Актуальная сетка для нативных слушателей window (вне замыкания React). */
   const gridSnapshotRef = useRef(state.grid);
@@ -303,6 +274,7 @@ function GameScreenContent({
 
   const [dragGhost, setDragGhost] = useState<{
     from: number;
+    itemId: string | null;
     emoji: string;
     x: number;
     y: number;
@@ -360,6 +332,7 @@ function GameScreenContent({
         const itemDef = pid ? ALL_ITEMS[pid] : undefined;
         setDragGhost({
           from: d.from,
+          itemId: pid ?? null,
           emoji: itemDef?.emoji ?? "❓",
           x: ev.clientX,
           y: ev.clientY,
@@ -427,78 +400,26 @@ function GameScreenContent({
           playerLevel={progState.level}
           playerXP={progState.xp}
           nextLevelXP={xpToNextLevel}
-          ordersCompleted={minigameOrdersCompletedAtRoom}
-          maxOrders={maxMinigameOrdersAtRoom}
+          totalOrdersCompleted={progState.totalOrdersCompleted}
           onGoHome={onGoHome}
         />
       </div>
 
       <div className="mb-1.5 w-full shrink-0">
-        {state.orders.length === 0 && ordersExhausted ? (
-          <div
-            className="flex flex-col items-center justify-center gap-2 rounded-[var(--ds-radius-card)] border border-dashed p-4 text-center"
-            style={{ borderColor: "var(--c-rose)", background: "var(--c-peach)" }}
-          >
-            <span className="text-2xl leading-none" aria-hidden>
-              🏠
-            </span>
-            <span className="text-[11px] font-medium leading-snug" style={{ color: "var(--c-browndark)" }}>
-              Хватит монет на улучшение. Зайдите в Дом и купите его, чтобы открыть следующие заказы.
-            </span>
-            {nextRepairCost != null ? (
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium tabular-nums" style={{ color: "var(--c-golddark)" }}>
-                <Coins className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--c-golddark)" }} aria-hidden />
-                {nextRepairCost}
-              </span>
-            ) : (
-              <span className="text-[10px] font-medium" style={{ color: "var(--c-brown)" }}>
-                Все шаги ремонта в комнате куплены
-              </span>
-            )}
-            <button
-              type="button"
-              className={
-                nextRepairCost != null && playerCoins >= nextRepairCost
-                  ? "ds-btn-primary w-full max-w-[200px]"
-                  : nextRepairCost != null
-                    ? "ds-btn-secondary w-full max-w-[200px] opacity-80"
-                    : "ds-btn-primary w-full max-w-[200px]"
-              }
-              onClick={onOrdersExhaustedGoHome}
-            >
-              {nextRepairCost != null && playerCoins >= nextRepairCost ? "Купить улучшение" : "В хаб"}
-            </button>
-          </div>
-        ) : (
-          <div className="orders-row justify-start px-1.5 py-2">
-            {state.orders.map((order) => (
-              <OrderCard
-                key={order.instanceId}
-                order={order}
-                grid={state.grid}
-                showCoinFly={coinFly?.source === "order" && coinFly.orderId === order.id}
-                coinFlyAmount={coinFly?.source === "order" && coinFly.orderId === order.id ? coinFly.amount : 0}
-                onItemInfo={(id) => setOrderItemInfoId(id)}
-                onDeliver={(id, inst, rect) => onCompleteOrder(id, inst, rect)}
-              />
-            ))}
-          </div>
-        )}
-        {!ordersExhausted && maxMinigameOrdersAtRoom > 0 ? (
-          <div className="w-full px-0.5 pb-1 pt-1">
-            <div className="ds-progress w-full" aria-label={`Прогресс заказов комнаты: ${minigameOrdersCompletedAtRoom} из ${maxMinigameOrdersAtRoom}`}>
-              <motion.div
-                className="ds-progress__fill ds-progress__fill--green"
-                initial={false}
-                animate={{
-                  width: `${Math.min(100, roomOrderRatio * 100)}%`,
-                  opacity: roomOrderBarFlash ? [1, 0.72, 1] : 1,
-                }}
-                transition={{ duration: roomOrderBarFlash ? 0.45 : 0.25 }}
-              />
-            </div>
-          </div>
-        ) : null}
+        <div className="orders-row justify-start px-1.5 py-2">
+          {state.orders.map((order) => (
+            <OrderCard
+              key={order.instanceId}
+              orders={state.orders}
+              order={order}
+              grid={state.grid}
+              showCoinFly={coinFly?.source === "order" && coinFly.orderId === order.id}
+              coinFlyAmount={coinFly?.source === "order" && coinFly.orderId === order.id ? coinFly.amount : 0}
+              onItemInfo={(id) => setOrderItemInfoId(id)}
+              onDeliver={(id, inst, rect) => onCompleteOrder(id, inst, rect)}
+            />
+          ))}
+        </div>
       </div>
 
       <OrderItemInfoModal
@@ -506,6 +427,44 @@ function GameScreenContent({
         itemId={orderItemInfoId}
         onClose={() => setOrderItemInfoId(null)}
       />
+      {generatorUnlockFx ? (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-[420px] rounded-2xl border border-[var(--c-peach2)] bg-[var(--c-cream)] p-4 shadow-2xl">
+            <div className="mb-2 text-center text-[36px] leading-none">{generatorUnlockFx.emoji}</div>
+            <h3 className="mb-1 text-center text-[16px] font-bold" style={{ color: "var(--c-browndark)" }}>
+              Поздравляю! Новый генератор
+            </h3>
+            <p className="mb-3 text-center text-[13px] font-semibold" style={{ color: "var(--c-brown)" }}>
+              {generatorUnlockFx.name}
+            </p>
+            <div className="mb-4 rounded-xl border border-[var(--c-peach2)] bg-white/70 px-2 py-2">
+              <p className="mb-2 text-center text-[11px] font-medium" style={{ color: "var(--c-muted)" }}>
+                Цепочка предметов генератора
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-1.5">
+                {generatorChainItems.map((it) => (
+                  <div
+                    key={it.id}
+                    className="flex min-w-[48px] flex-col items-center rounded-lg border border-[var(--c-peach2)] bg-[var(--c-cream)] px-1.5 py-1"
+                  >
+                    <ItemIcon itemId={it.id} size={24} />
+                    <span className="mt-0.5 text-[9px] font-medium" style={{ color: "var(--c-brown)" }}>
+                      Ур. {it.level}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="ds-btn-primary w-full"
+              onClick={() => onDismissGeneratorUnlockFx?.()}
+            >
+              Продолжить
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Поле: квадратные ячейки по ширине. Всё поле масштабируется через uiScale */}
       <div className="flex w-full shrink-0 justify-center px-0.5 pb-1">
@@ -537,14 +496,16 @@ function GameScreenContent({
                 (cellShakePair[0] === index || cellShakePair[1] === index);
               const isDragSource = dragGhost?.from === index;
               const isUnlockFlash = cellUnlockedFlashIndices.includes(index);
-              const isGeneratorChestAppear = generatorChestAppearIndices.includes(index);
+              const isGeneratorAppear = generatorAppearIndices.includes(index);
+              const showFreeSpawnBadge = freeSpawnFlashIndex === index;
               const unlockFlashStrong = cellUnlockHeavyFlash && isUnlockFlash;
               const isGeneratorChest = isBox && cell.boxIsGenerator;
               const canDragFrom = cellAllowsGridDragSource(cell);
               const isGen = Boolean(item && itemIsGenerator(item));
               const genBlocked = isGen && state.energy <= 0;
-              const isResPickup = Boolean(item && itemIsResourcePickup(item));
-              const resIsCoins = Boolean(isResPickup && item && item.grantsCoins > 0);
+              const resPickupDef = item && itemIsResourcePickup(item) ? item : null;
+              const isResPickup = resPickupDef != null;
+              const resIsCoins = resPickupDef != null && resPickupDef.grantsCoins > 0;
               const showOrderReadyOnGrid =
                 Boolean(itemId && item) &&
                 gridCellSuppliesItemForOrder(cell, itemId) &&
@@ -565,7 +526,7 @@ function GameScreenContent({
                 mergePopIndex === index ? "cell-merge-pop" : "",
                 isUnlockFlash ? (unlockFlashStrong ? "cell-unlocked cell-unlocked-strong" : "cell-unlocked") : "",
                 isGeneratorChest ? "cell-generator-chest" : "",
-                isGeneratorChestAppear ? "cell-generator-chest-appear" : "",
+                isGeneratorAppear ? "cell-generator-appear" : "",
                 isShaking ? "cell-shake" : "",
                 isDragSource ? "opacity-45" : "",
                 canDragFrom ? "touch-none select-none" : "",
@@ -635,6 +596,15 @@ function GameScreenContent({
                       ) : null}
                     </>
                   ) : null}
+                  {showFreeSpawnBadge ? (
+                    <span
+                      className="pointer-events-none absolute -top-1 left-1/2 z-[6] -translate-x-1/2 whitespace-nowrap rounded-full border border-[var(--c-peach2)] bg-[var(--c-cream)] px-1 text-[8px] font-bold"
+                      style={{ color: "var(--c-greendark)" }}
+                      aria-hidden
+                    >
+                      бесплатно
+                    </span>
+                  ) : null}
                   {isCobweb ? (
                     <div
                       className="pointer-events-none absolute inset-0 z-[2] rounded-[5px]"
@@ -655,21 +625,16 @@ function GameScreenContent({
                   ) : null}
                   <div className="relative z-[5] flex items-center justify-center overflow-hidden">
                     <AnimatePresence mode="popLayout">
-                      {item && (
+                      {item && itemId && (
                         <motion.span
                           key={`${index}-${cell.cellType}-${itemId}`}
-                          initial={{
-                            scale: 0,
-                            opacity: 0,
-                            rotate: 0,
-                          }}
-                          animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                          initial={{ scale: 0, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
                           exit={{ scale: 0, opacity: 0 }}
                           transition={{ duration: 0.2 }}
-                          style={{ fontSize: emojiFontPx }}
                           className="pointer-events-none inline-flex select-none items-center justify-center leading-none"
                         >
-                          {item.emoji}
+                          <ItemIcon itemId={itemId} size={Math.round(emojiFontPx * 1.25)} />
                         </motion.span>
                       )}
                     </AnimatePresence>
@@ -722,8 +687,15 @@ function GameScreenContent({
               style={{ background: "rgba(92, 61, 34, 0.55)" }}
             >
               <span className="mb-2 text-sm font-medium text-white">Энергия закончилась</span>
-              <button type="button" onClick={onWatchAdEnergy} className="ds-btn-primary mb-2 max-w-[260px]">
-                Смотреть рекламу → +{ENERGY_AD_REWARD} ⚡
+              <button
+                type="button"
+                onClick={onWatchAdEnergy}
+                disabled={energyAdCooldownMs > 0}
+                className={`mb-2 max-w-[260px] ${energyAdCooldownMs > 0 ? "ds-btn-secondary opacity-70" : "ds-btn-primary"}`}
+              >
+                {energyAdCooldownMs > 0
+                  ? `Реклама через ${formatCooldown(energyAdCooldownMs)}`
+                  : `Смотреть рекламу → +${ENERGY_AD_REWARD} ⚡`}
               </button>
               <span className="max-w-[220px] text-[11px] font-medium leading-snug text-white/90">
                 Или подождите: +1 энергии каждые 3 минуты
@@ -814,7 +786,11 @@ function GameScreenContent({
               transform: "translate(-50%, -50%)",
             }}
           >
-            {dragGhost.emoji}
+            {dragGhost.itemId ? (
+              <ItemIcon itemId={dragGhost.itemId} size={40} />
+            ) : (
+              dragGhost.emoji
+            )}
           </div>,
           document.body
         )}

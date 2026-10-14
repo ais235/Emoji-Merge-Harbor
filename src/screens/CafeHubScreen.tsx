@@ -3,13 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
 import { useUiScaling } from "../hooks/useUiScaling";
 import { Zap, Coins, Star } from "lucide-react";
 import { motion } from "motion/react";
-import type { ActiveZone } from "../types";
-import { progressZoneId } from "../types";
+import { ALL_ITEMS, progressZoneId, type ActiveZone, type ReconstructionState } from "../types";
 import { HUB_ZONES, roomFurnitureProgress } from "../progressionData";
+import {
+  getCurrentReconstructionStage,
+  isReconstructionFullyComplete,
+  reconstructionItemRemaining,
+  reconstructionOrdersProgress,
+} from "../reconstruction";
 
 export interface CafeHubScreenProps {
   energy: number;
@@ -19,20 +23,20 @@ export interface CafeHubScreenProps {
   xpProgressPercent: number;
   unlockedZones: string[];
   purchasedUpgrades: string[];
-  /** Текущая комната миниигры — подсветка карточки. */
-  currentPlayZone: ActiveZone;
   onNavigateRoom: (zone: ActiveZone) => void;
-  dailyQuestCompleted: number;
-  dailyQuestTotal: number;
   dailyUnclaimedCount: number;
   onOpenDaily: () => void;
   onOpenCoinShop?: () => void;
   onOpenCollection?: () => void;
   onBackToMenu: () => void;
   onPlay: () => void;
-  repairNudgeZone?: ActiveZone | null;
   hubOrdersToast?: string | null;
   pulsePlayButton?: boolean;
+  /** Цепочка «Реконструкция кафе» — текущий этап и его прогресс. */
+  reconstruction: ReconstructionState;
+  /** Можно ли прямо сейчас сдать предмет в этап типа `items` (есть на поле). */
+  canDeliverReconstructionItem: boolean;
+  onDeliverReconstructionItem: () => void;
 }
 
 export default function CafeHubScreen({
@@ -43,26 +47,23 @@ export default function CafeHubScreen({
   xpProgressPercent,
   unlockedZones,
   purchasedUpgrades,
-  currentPlayZone,
   onNavigateRoom,
-  dailyQuestCompleted,
-  dailyQuestTotal,
   dailyUnclaimedCount,
   onOpenDaily,
   onOpenCoinShop,
   onOpenCollection,
   onBackToMenu,
   onPlay,
-  repairNudgeZone = null,
   hubOrdersToast = null,
   pulsePlayButton = false,
+  reconstruction,
+  canDeliverReconstructionItem,
+  onDeliverReconstructionItem,
 }: CafeHubScreenProps) {
-  const nudgeRoomName =
-    repairNudgeZone != null
-      ? (HUB_ZONES.find((z) => z.id === repairNudgeZone)?.displayName ?? "комнату")
-      : "";
-
-  const { containerRef, uiScale, scalingStyle } = useUiScaling();
+  const reconStage = getCurrentReconstructionStage(reconstruction);
+  const reconDone = isReconstructionFullyComplete(reconstruction);
+  const reconOrders = reconStage ? reconstructionOrdersProgress(reconstruction, reconStage) : null;
+  const { containerRef, scalingStyle } = useUiScaling();
 
   return (
     <div
@@ -155,6 +156,77 @@ export default function CafeHubScreen({
           </button>
         </div>
 
+        {reconStage && !reconDone ? (
+          <div className="ds-card-peach mb-3">
+            <div className="mb-1 flex items-center gap-1.5">
+              <span className="text-base leading-none" aria-hidden>
+                🔨
+              </span>
+              <span className="text-[12px] font-medium" style={{ color: "var(--c-browndark)" }}>
+                {reconStage.title}
+              </span>
+            </div>
+            <p className="mb-2 text-[10px] font-medium leading-snug" style={{ color: "var(--c-brown)" }}>
+              {reconStage.description}
+            </p>
+
+            {reconOrders ? (
+              <>
+                <div className="ds-progress mb-1 w-full">
+                  <div
+                    className="ds-progress__fill ds-progress__fill--green"
+                    style={{
+                      width: `${Math.min(100, (reconOrders.current / Math.max(1, reconOrders.target)) * 100)}%`,
+                    }}
+                  />
+                </div>
+                <div className="text-[10px] font-medium tabular-nums" style={{ color: "var(--c-brown)" }}>
+                  Заказов: {Math.min(reconOrders.current, reconOrders.target)}/{reconOrders.target}
+                </div>
+              </>
+            ) : null}
+
+            {reconStage.requirement.type === "items" ? (
+              <>
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  {reconStage.requirement.needs.map((need) => {
+                    const left = reconstructionItemRemaining(reconstruction, reconStage, need.itemId);
+                    const done = need.count - left;
+                    return (
+                      <div
+                        key={need.itemId}
+                        className="flex items-center gap-1 rounded-lg border border-[var(--c-peach2)] bg-[var(--c-cream)] px-1.5 py-1"
+                      >
+                        <span className="text-base leading-none" aria-hidden>
+                          {ALL_ITEMS[need.itemId]?.emoji ?? "❓"}
+                        </span>
+                        <span
+                          className="text-[10px] font-medium tabular-nums"
+                          style={{ color: left === 0 ? "var(--c-greendark, #2E7D32)" : "var(--c-brown)" }}
+                        >
+                          {done}/{need.count}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={onDeliverReconstructionItem}
+                  disabled={!canDeliverReconstructionItem}
+                  className={`w-full ${canDeliverReconstructionItem ? "ds-btn-primary" : "ds-btn-secondary opacity-60"}`}
+                >
+                  {canDeliverReconstructionItem ? "Сдать предмет" : "Нужный предмет не найден на поле"}
+                </button>
+              </>
+            ) : null}
+
+            <div className="mt-2 text-[10px] font-medium" style={{ color: "var(--c-muted)" }}>
+              Награда: {reconStage.rewardCoins} монет · {reconStage.rewardXp} опыта
+            </div>
+          </div>
+        ) : null}
+
         <p className="mb-1.5 text-center text-[10px] font-medium" style={{ color: "var(--c-muted)" }}>
           Комнаты
         </p>
@@ -162,24 +234,16 @@ export default function CafeHubScreen({
           {HUB_ZONES.map((zone) => {
             const key = progressZoneId(zone.id);
             const isOpen = unlockedZones.includes(key);
-            const isRepairNudge = repairNudgeZone != null && zone.id === repairNudgeZone;
-            const isCurrent = zone.id === currentPlayZone;
             const { bought: furnBought, total: furnTotal } = roomFurnitureProgress(zone.id, purchasedUpgrades);
             const levelsLeft = Math.max(0, zone.unlockLevel - level);
             return (
               <motion.div
                 key={zone.id}
-                animate={
-                  isRepairNudge
-                    ? { opacity: [1, 0.92, 1] }
-                    : false
-                }
-                transition={isRepairNudge ? { duration: 1.4, repeat: Infinity, ease: "easeInOut" } : undefined}
-                className={`flex items-center gap-2 rounded-[var(--ds-radius-card)] bg-[var(--c-cream)] p-2.5 ${
-                  isCurrent && isOpen
-                    ? "ds-card-active-blue"
-                    : `border ${isRepairNudge ? "border-[var(--c-rose)]" : "border-[var(--c-peach2)]"}`
-                } ${!isOpen ? "opacity-50" : ""}`}
+                animate={false}
+                transition={undefined}
+                className={`flex items-center gap-2 rounded-[var(--ds-radius-card)] border border-[var(--c-peach2)] bg-[var(--c-cream)] p-2.5 ${
+                  !isOpen ? "opacity-50" : ""
+                }`}
               >
                 <span
                   className="flex h-10 w-10 shrink-0 items-center justify-center text-2xl leading-none"
@@ -238,16 +302,6 @@ export default function CafeHubScreen({
         </div>
       </div>
 
-      {repairNudgeZone != null ? (
-        <div
-          className="flex-shrink-0 border-t px-3 py-2.5 text-center"
-          style={{ borderColor: "var(--c-peach2)", background: "var(--c-peach)" }}
-        >
-          <p className="text-[11px] font-medium leading-snug" style={{ color: "var(--c-browndark)" }}>
-            Отремонтируйте «{nudgeRoomName}», чтобы продолжить задания в миниигре
-          </p>
-        </div>
-      ) : null}
       {hubOrdersToast ? (
         <div
           className="flex-shrink-0 border-t px-3 py-2.5 text-center"

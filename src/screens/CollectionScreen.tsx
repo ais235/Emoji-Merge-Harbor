@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
 import { useUiScaling } from "../hooks/useUiScaling";
 import { Coins, Home } from "lucide-react";
 import {
@@ -21,7 +20,7 @@ export interface CollectionScreenProps {
 
 export default function CollectionScreen({ progState, onBack }: CollectionScreenProps) {
   const chains = collectionChainsInHubOrder();
-  const { containerRef, uiScale, scalingStyle } = useUiScaling();
+  const { containerRef, scalingStyle } = useUiScaling();
 
   return (
     <div

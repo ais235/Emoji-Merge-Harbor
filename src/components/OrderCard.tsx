@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Coins } from "lucide-react";
+import { ItemIcon } from "./ItemIcon";
 import {
-  ALL_ITEMS,
   orderAllRemainingSatisfiedFromGrid,
   orderReqLineSatisfiedOnGrid,
   resolveOrderCustomerAvatar,
@@ -124,7 +124,6 @@ export function OrderCard({
           }}
         >
           {reqs.map((req, ri) => {
-            const def = ALL_ITEMS[req.itemId];
             const lineMet =
               orderIndex >= 0
                 ? orderReqLineSatisfiedOnGrid(grid, orders, orderIndex, order, req)
@@ -138,7 +137,9 @@ export function OrderCard({
                 onClick={() => onItemInfo(req.itemId)}
                 title="Подсказка по предмету"
               >
-                <span className="order-card-tray-emoji block leading-none">{def?.emoji ?? "❓"}</span>
+                <span className="order-card-tray-emoji block leading-none">
+                  <ItemIcon itemId={req.itemId} size={34} />
+                </span>
                 {needCount > 1 ? (
                   <span
                     className="absolute -right-0.5 -top-0.5 min-w-[14px] rounded border px-0.5 text-[8px] font-bold leading-none"

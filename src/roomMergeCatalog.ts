@@ -19,6 +19,22 @@ function coinForLevel(level: number): number {
   return 2 ** level;
 }
 
+/**
+ * Структурно совпадает с `MergeableItemDefinition` из `types.ts`.
+ * Дублируется здесь намеренно: этот модуль не импортирует `./types` (циклическая зависимость).
+ */
+export interface RoomMergeableItem {
+  id: string;
+  name: string;
+  emoji: string;
+  chain: string;
+  level: number;
+  xpReward: number;
+  coinReward: number;
+  rarity: "common" | "rare" | "epic";
+  description?: string;
+}
+
 function mergeable(
   id: string,
   name: string,
@@ -26,8 +42,8 @@ function mergeable(
   chain: string,
   level: number,
   description?: string
-) {
-  const o: Record<string, unknown> = {
+): RoomMergeableItem {
+  const o: RoomMergeableItem = {
     id,
     name,
     emoji,
@@ -44,7 +60,7 @@ function mergeable(
 /** id цепочки → описание для коллекции и ITEM_CHAINS. */
 export const ROOM_MERGE_CHAINS: Record<
   string,
-  { id: string; name: string; items: ReturnType<typeof mergeable>[] }
+  { id: string; name: string; items: RoomMergeableItem[] }
 > = {
   hall_tea: {
     id: "hall_tea",
@@ -67,7 +83,7 @@ export const ROOM_MERGE_CHAINS: Record<
       mergeable("kt2", "Морковь", "🥕", "kitchen_meal", 2),
       mergeable("kt3", "Картофель", "🥔", "kitchen_meal", 3),
       mergeable("kt4", "Баклажан", "🍆", "kitchen_meal", 4),
-      mergeable("kt5", "Болгарский перец", "🫑", "kitchen_meal", 5),
+      mergeable("kt5", "Чеснок", "🧄", "kitchen_meal", 5),
       mergeable("kt6", "Брокколи", "🥦", "kitchen_meal", 6),
       mergeable("kt7", "Горячее в кастрюле", "🍲", "kitchen_meal", 7, "Суп готов."),
     ],
@@ -80,9 +96,9 @@ export const ROOM_MERGE_CHAINS: Record<
       mergeable("bd2", "Книги", "📚", "bedroom_cozy", 2),
       mergeable("bd3", "Песочные часы", "⏳", "bedroom_cozy", 3),
       mergeable("bd4", "Настенные часы", "🕰️", "bedroom_cozy", 4),
-      mergeable("bd5", "Сон", "💤", "bedroom_cozy", 5),
-      mergeable("bd6", "Ночной город", "🌃", "bedroom_cozy", 6),
-      mergeable("bd7", "Отдых в кровати", "🛌", "bedroom_cozy", 7),
+      mergeable("bd5", "Настольная лампа", "💡", "bedroom_cozy", 5),
+      mergeable("bd6", "Кружка с какао", "☕", "bedroom_cozy", 6),
+      mergeable("bd7", "Свеча в подсвечнике", "🕯️", "bedroom_cozy", 7),
     ],
   },
   bathroom_fresh: {
@@ -119,8 +135,8 @@ export const ROOM_MERGE_CHAINS: Record<
       mergeable("of2", "Заметка", "📝", "office_work", 2),
       mergeable("of3", "Лист бумаги", "📄", "office_work", 3),
       mergeable("of4", "Тетрадь", "📓", "office_work", 4),
-      mergeable("of5", "Скрепка", "📎", "office_work", 5),
-      mergeable("of6", "Связанные скрепки", "🖇️", "office_work", 6),
+      mergeable("of5", "Степлер", "📌", "office_work", 5),
+      mergeable("of6", "Сшитый отчёт", "📊", "office_work", 6),
       mergeable("of7", "Папка с документами", "📂", "office_work", 7),
     ],
   },
@@ -145,8 +161,8 @@ export const ROOM_MERGE_CHAINS: Record<
       mergeable("sc2", "Свиток", "📜", "secret_mystic", 2),
       mergeable("sc3", "Волшебная палочка", "🪄", "secret_mystic", 3),
       mergeable("sc4", "Звезда", "⭐", "secret_mystic", 4),
-      mergeable("sc5", "Сияющая звезда", "🌟", "secret_mystic", 5),
-      mergeable("sc6", "Искры", "✨", "secret_mystic", 6),
+      mergeable("sc5", "Созвездие", "🔭", "secret_mystic", 5),
+      mergeable("sc6", "Комета", "☄️", "secret_mystic", 6),
       mergeable("sc7", "Ночное небо", "🌌", "secret_mystic", 7),
     ],
   },
@@ -159,7 +175,7 @@ export const ROOM_MERGE_CHAINS: Record<
       mergeable("gn3", "Кукуруза", "🌽", "garden_harvest", 3),
       mergeable("gn4", "Помидор", "🍅", "garden_harvest", 4),
       mergeable("gn5", "Горох в стручке", "🫛", "garden_harvest", 5),
-      mergeable("gn6", "Арахис", "🥜", "garden_harvest", 6),
+      mergeable("gn6", "Гриб", "🍄", "garden_harvest", 6),
       mergeable("gn7", "Батат", "🍠", "garden_harvest", 7),
     ],
   },
@@ -216,8 +232,8 @@ export const ROOM_GENERATOR_DEFS: Record<
   },
   gen_office: {
     id: "gen_office",
-    name: "Портфель",
-    emoji: "💼",
+    name: "Печатная машинка",
+    emoji: "⌨️",
     spawnsChainId: "office_work",
   },
   gen_lounge: {

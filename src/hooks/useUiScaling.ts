@@ -9,17 +9,29 @@ import { useLayoutEffect, useRef, useState } from "react";
  * Хук для автоматического масштабирования контента под высоту экрана.
  * Применяется на десктопе (ширина > 900px), чтобы контент влезал без прокрутки.
  */
+/** Ниже этой ширины считаем экран мобильным и не масштабируем. */
+const DESKTOP_MIN_WIDTH = 900;
+/** Базовая ширина окна на десктопе, которую хотим сохранить визуально. */
+const DESKTOP_BASE_WIDTH = 520;
+
 export function useUiScaling() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [uiScale, setUiScale] = useState(1);
+  // Ширину держим в состоянии: раньше `window.innerWidth` читался прямо в теле рендера,
+  // поэтому переход через границу 900px не вызывал перерисовку сам по себе.
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== "undefined" && window.innerWidth >= DESKTOP_MIN_WIDTH
+  );
 
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
     const measureScale = () => {
+      const desktop = window.innerWidth >= DESKTOP_MIN_WIDTH;
+      setIsDesktop(desktop);
       // На мобильных (узких) экранах не масштабируем — там ожидается вертикальный скролл
-      if (window.innerWidth < 900) {
+      if (!desktop) {
         setUiScale(1);
         return;
       }
@@ -52,10 +64,7 @@ export function useUiScaling() {
     };
   }, []);
 
-  // Базовая ширина окна на десктопе, которую мы хотим сохранить визуально
-  const DESKTOP_BASE_WIDTH = 520;
-
-  const scalingStyle: React.CSSProperties = (window.innerWidth >= 900) ? {
+  const scalingStyle: React.CSSProperties = isDesktop ? {
     transform: `scale(${uiScale})`,
     transformOrigin: "top center",
     // Компенсируем уменьшение ширины от scale, увеличивая саму ширину контейнера

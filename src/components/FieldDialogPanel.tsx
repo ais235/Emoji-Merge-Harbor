@@ -5,8 +5,9 @@
  * VN-панель снизу экрана на поле миниигры.
  * Аватары: public/avatars/{npc}_{emotion}.png — при отсутствии файла показывается эмодзи.
  */
+import type React from "react";
 
-import React, {
+import {
   createContext,
   useCallback,
   useContext,
@@ -79,6 +80,14 @@ const STYLES = `
   .vn-overlay.vn-blocking {
     pointer-events: auto;
     background: rgba(0,0,0,0.28);
+  }
+  /*
+   * Информационная панель (сама скрывается по таймеру) не должна перехватывать тапы:
+   * она лежит поверх нижних рядов поля, и раньше на ~4 секунды делала их некликабельными.
+   * Панель с выбором (vn-blocking) клики по-прежнему принимает.
+   */
+  .vn-overlay:not(.vn-blocking) .vn-panel {
+    pointer-events: none;
   }
 
   .vn-panel {
@@ -178,7 +187,7 @@ const STYLES = `
 export function FieldDialogProvider({ children }: { children: React.ReactNode }) {
   const [current, setCurrent] = useState<PanelLine | null>(null);
   const [visible, setVisible] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timerRef = useRef<number | null>(null);
 
   const hidePanel = useCallback(() => {
     if (timerRef.current) window.clearTimeout(timerRef.current);
@@ -195,6 +204,13 @@ export function FieldDialogProvider({ children }: { children: React.ReactNode })
     const duration = line.duration ?? (line.choices ? 0 : 4200);
     if (duration > 0) {
       timerRef.current = window.setTimeout(() => setVisible(false), duration);
+      // Любое касание поля убирает панель досрочно.
+      const dismissOnInteract = () => {
+        if (timerRef.current) window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+        setVisible(false);
+      };
+      window.addEventListener("pointerdown", dismissOnInteract, { once: true });
     }
   }, []);
 

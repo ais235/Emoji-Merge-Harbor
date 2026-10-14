@@ -3,9 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
 import { X } from "lucide-react";
-import { ALL_ITEMS, ITEM_CHAINS, type ItemId } from "../types";
+import { ALL_ITEMS, ITEM_CHAINS, itemIsMergeable, type ItemId } from "../types";
 import { ROOM_GENERATOR_DEFS } from "../roomMergeCatalog";
 
 export interface OrderItemInfoModalProps {
@@ -22,7 +21,7 @@ export default function OrderItemInfoModal({ open, onClose, itemId }: OrderItemI
   const chain = chainId ? ITEM_CHAINS[chainId] : undefined;
   const generators = Object.values(ROOM_GENERATOR_DEFS).filter((g) => g.spawnsChainId === chainId);
   const chainItems = chain
-    ? chain.items.filter((it): it is { id: string; name: string; emoji: string; level: number } => "level" in it)
+    ? chain.items.filter(itemIsMergeable)
     : [];
 
   return (

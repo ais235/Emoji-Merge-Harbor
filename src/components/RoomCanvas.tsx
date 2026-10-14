@@ -2,8 +2,9 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
+import type React from "react";
 
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FurnitureLayer, RoomVisual } from "../story/roomData";
 
 /** Пути из `public/` (`/rooms/...`) с учётом `base` в vite.config */
@@ -135,7 +136,7 @@ export default function RoomCanvas({
     endDrag();
   };
 
-  const handleLayerPointerCancel = (e: React.PointerEvent, layer: FurnitureLayer) => {
+  const handleLayerPointerCancel = (_e: React.PointerEvent, layer: FurnitureLayer) => {
     if (!editor || !dragRef.current || dragRef.current.upgradeId !== layer.upgradeId) return;
     endDrag();
   };

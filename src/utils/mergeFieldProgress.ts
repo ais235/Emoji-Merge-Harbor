@@ -4,6 +4,7 @@
 
 import type { FieldProgressState, GridCell } from "../types";
 import { ALL_ITEMS, isSealedFieldCell, itemIsGenerator } from "../types";
+import { BOX_BONUS_LOOT_COINS } from "../gameBalance";
 import {
   buildAllUnlockQueues,
   fieldZoneEntry,
@@ -19,7 +20,19 @@ export type MergeFieldProgressResult = {
   unlockedGeneratorItemId: string | null;
   openedCellIndices: number[];
   zoneJustCompleted: { zoneId: FieldUnlockZoneId; name: string } | null;
+  /** Бонусные монеты из открытых ящиков (апгрейд `box_loot_chance`); 0 — не выпало. */
+  bonusLootCoins: number;
 };
+
+/** Ролл бонусной находки на каждый открытый ящик. */
+function rollBoxBonusCoins(openedCount: number, boxLootChance: number): number {
+  if (openedCount <= 0 || boxLootChance <= 0) return 0;
+  let coins = 0;
+  for (let i = 0; i < openedCount; i++) {
+    if (Math.random() < boxLootChance) coins += BOX_BONUS_LOOT_COINS;
+  }
+  return coins;
+}
 
 function activeSpawnsChainIdsFromWorking(grid: GridCell[]): Set<string> {
   const activeIds = new Set<string>();
@@ -87,7 +100,8 @@ export function handleMergeFieldProgress(
   fieldProgress: FieldProgressState,
   resultLevel: number,
   width: number,
-  height: number
+  height: number,
+  boxLootChance = 0
 ): MergeFieldProgressResult {
   const z1 = mergeZone1Params();
   let fp: FieldProgressState = {
@@ -111,6 +125,7 @@ export function handleMergeFieldProgress(
       unlockedGeneratorItemId: null,
       openedCellIndices: [],
       zoneJustCompleted: null,
+      bonusLootCoins: 0,
     };
   }
 
@@ -126,6 +141,7 @@ export function handleMergeFieldProgress(
       unlockedGeneratorItemId: null,
       openedCellIndices: [],
       zoneJustCompleted: null,
+      bonusLootCoins: 0,
     };
   }
   const afterGate = counter - z1.unlocksAfterMerges;
@@ -136,6 +152,7 @@ export function handleMergeFieldProgress(
       unlockedGeneratorItemId: null,
       openedCellIndices: [],
       zoneJustCompleted: null,
+      bonusLootCoins: 0,
     };
   }
 
@@ -157,6 +174,7 @@ export function handleMergeFieldProgress(
     unlockedGeneratorItemId,
     openedCellIndices,
     zoneJustCompleted,
+    bonusLootCoins: rollBoxBonusCoins(openedCellIndices.length, boxLootChance),
   };
 }
 
@@ -165,7 +183,8 @@ export function handleOrderFieldProgress(
   grid: GridCell[],
   fieldProgress: FieldProgressState,
   width: number,
-  height: number
+  height: number,
+  boxLootChance = 0
 ): MergeFieldProgressResult {
   let fp: FieldProgressState = {
     ...fieldProgress,
@@ -213,6 +232,7 @@ export function handleOrderFieldProgress(
     unlockedGeneratorItemId,
     openedCellIndices,
     zoneJustCompleted,
+    bonusLootCoins: rollBoxBonusCoins(openedCellIndices.length, boxLootChance),
   };
 }
 
@@ -246,7 +266,7 @@ export function migrateFieldProgressFromGrid(
   totalOrdersCompletedHint = 0
 ): FieldProgressState {
   const centerIdx = gridCenterIndex(width, height);
-  const queues = buildAllUnlockQueues(grid, width, height, centerIdx);
+  const queues = buildAllUnlockQueues(grid, width, centerIdx);
   const z1 = mergeZone1Params();
 
   const estimateMergeCounter = (zoneId: FieldUnlockZoneId): number => {

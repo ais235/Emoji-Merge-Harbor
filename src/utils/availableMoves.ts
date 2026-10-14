@@ -46,25 +46,14 @@ function hasResourcePickupClick(grid: GridCell[]): boolean {
 /**
  * Есть ли эффективный ход: слияние / заказ / генератор (энергия) / ресурс.
  */
-export function hasEffectiveMoves(
-  grid: GridCell[],
-  orders: Order[] | undefined,
-  energy: number,
-  _generatorMaxChargesUnused: number,
-  _width = 9,
-  _height = 12
-): boolean {
+export function hasEffectiveMoves(grid: GridCell[], orders: Order[] | undefined, energy: number): boolean {
   if (orders?.length) {
-    for (const o of orders) {
-      if (orderCanDeliverFromGrid(grid, o)) return true;
+    for (let i = 0; i < orders.length; i++) {
+      if (orderCanDeliverFromGrid(grid, orders, i)) return true;
     }
   }
   if (mergeablePairExists(grid)) return true;
   if (hasGeneratorSpawnMove(grid, energy)) return true;
   if (hasResourcePickupClick(grid)) return true;
   return false;
-}
-
-export function hasAvailableMoves(grid: GridCell[], orders?: Order[]): boolean {
-  return hasEffectiveMoves(grid, orders, Number.POSITIVE_INFINITY, 0, 9, 12);
 }

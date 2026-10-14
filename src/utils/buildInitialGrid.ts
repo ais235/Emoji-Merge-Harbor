@@ -7,8 +7,7 @@ import {
   ITEM_CHAINS,
   mergeChainIdForZone,
   generatorItemIdForZone,
-  itemIsGenerator,
-  itemIsResourcePickup,
+  itemIsMergeable,
 } from "../types";
 import type { FieldProgressState } from "../types";
 import { boxGridCell, emptyGridCell, generatorGridCell, hintBoxGridCell } from "./gridCells";
@@ -28,7 +27,7 @@ function mergeableChainIdsOrdered(primaryChainId: string): string[] {
     if (id.startsWith("__")) return false;
     const ch = ITEM_CHAINS[id];
     if (!ch) return false;
-    return ch.items.some((it) => "level" in it && !itemIsGenerator(it) && !itemIsResourcePickup(it));
+    return ch.items.some(itemIsMergeable);
   });
   const rest = ids.filter((id) => id !== primaryChainId).sort();
   return [primaryChainId, ...rest];
@@ -40,9 +39,7 @@ function boxLootFromChain(
 ): { boxItem: ItemId; boxItemLevel: number; boxChainId: string } | null {
   const ch = ITEM_CHAINS[chainId];
   if (!ch) return null;
-  const mergeables = ch.items.filter(
-    (x): x is { id: ItemId; level: number } => "level" in x && !itemIsGenerator(x) && !itemIsResourcePickup(x)
-  );
+  const mergeables = ch.items.filter(itemIsMergeable);
   if (!mergeables.length) return null;
   const maxLv = Math.max(...mergeables.map((m) => m.level));
   let L = Math.min(targetLevel, maxLv);
@@ -55,12 +52,18 @@ function boxLootFromChain(
   return first ? { boxItem: first.id, boxItemLevel: first.level, boxChainId: chainId } : null;
 }
 
-function assignBoxCell(manhattan: number, orderedChains: string[]): GridCell {
+function assignBoxCell(manhattan: number, orderedChains: string[], row: number, col: number): GridCell {
   const depth = Math.max(0, manhattan - 4);
-  const poolSize = Math.min(orderedChains.length, 1 + Math.ceil((depth + 1) / 2));
+  // Быстрее расширяем пул цепочек, чтобы закрытые клетки не были однотипными.
+  const poolSize = Math.min(orderedChains.length, 2 + depth);
   const pool = orderedChains.slice(0, Math.max(1, poolSize));
-  const level = Math.min(5, 1 + Math.floor(depth / 2));
-  const chainId = pool[Math.floor(Math.random() * pool.length)] ?? orderedChains[0];
+  const levelMax = Math.min(5, 2 + Math.floor(depth / 2));
+  const levelMin = Math.max(1, levelMax - 2);
+  const level = levelMin + Math.floor(Math.random() * (levelMax - levelMin + 1));
+  // Шахматно-детерминированный выбор цепочки + лёгкая случайность.
+  const seed = (row * 31 + col * 17 + manhattan * 7) % Math.max(1, pool.length);
+  const offset = Math.random() < 0.35 ? 1 : 0;
+  const chainId = pool[(seed + offset) % pool.length] ?? orderedChains[0];
   const loot = boxLootFromChain(chainId, level);
   if (loot) return boxGridCell(loot);
   const fb = orderedChains[0] ? boxLootFromChain(orderedChains[0], 1) : null;
@@ -144,7 +147,7 @@ export function buildInitialGrid(width: number, height: number, zone: ActiveZone
     const grid: GridCell[] = [];
     for (let i = 0; i < width * height; i++) grid.push(emptyGridCell());
     grid[centerIdx] = generatorGridCell(genId);
-    const fp = { ...emptyFieldProgress(), unlockQueues: buildAllUnlockQueues(grid, width, height, centerIdx) };
+    const fp = { ...emptyFieldProgress(), unlockQueues: buildAllUnlockQueues(grid, width, centerIdx) };
     return { grid, fieldProgress: fp };
   }
 
@@ -157,7 +160,7 @@ export function buildInitialGrid(width: number, height: number, zone: ActiveZone
       } else if (m <= 2) {
         grid.push(emptyGridCell());
       } else {
-        grid.push(assignBoxCell(m, orderedChains));
+        grid.push(assignBoxCell(m, orderedChains, r, c));
       }
     }
   }
@@ -166,7 +169,7 @@ export function buildInitialGrid(width: number, height: number, zone: ActiveZone
 
   const fieldProgress: FieldProgressState = {
     ...emptyFieldProgress(),
-    unlockQueues: buildAllUnlockQueues(grid, width, height, centerIdx),
+    unlockQueues: buildAllUnlockQueues(grid, width, centerIdx),
   };
 
   return { grid, fieldProgress };

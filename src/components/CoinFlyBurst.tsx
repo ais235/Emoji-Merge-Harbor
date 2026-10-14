@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { playSfx } from "../utils/playSfx";
 
@@ -143,8 +143,9 @@ export default function CoinFlyBurst({
 
   return createPortal(
     <>
-      {coins.map((c) => (
-        <SingleCoin key={c.key} {...c} onOneLanded={onOneLanded} />
+      {coins.map(({ key, ...coin }) => (
+        // key передаём отдельно: React ругается, если он приходит внутри spread-объекта.
+        <SingleCoin key={key} {...coin} onOneLanded={onOneLanded} />
       ))}
     </>,
     document.body

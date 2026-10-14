@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useLayoutEffect, useState } from "react";
+import { useCallback, useLayoutEffect, useState } from "react";
 import { Home, Coins } from "lucide-react";
 import RoomCanvas from "../components/RoomCanvas";
 import RoomLayoutEditorPanel from "../components/RoomLayoutEditorPanel";

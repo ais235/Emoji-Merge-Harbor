@@ -1,30 +1,18 @@
 import { LEVELS, UPGRADES } from "./progressionData";
 import type { ProgressionState } from "./types";
 
-/** Базовое значение для апгрейда «доп. заряды генератора» (поле больше не хранит заряды). */
-const GENERATOR_CHARGE_CAP_BASE = 5;
-
-/** Суммарные эффекты купленных апгрейдов. income_bonus / gen_speed / bonus_chance — доли (0 = нет эффекта). */
+/** Суммарные эффекты купленных апгрейдов. Все, кроме `energy_max`, — доли (0 = нет эффекта). */
 export interface ActiveBonuses {
+  /** Прибавка к потолку энергии (целое). */
   energy_max: number;
-  gen_speed: number;
+  /** Множитель монет за заказ: итог = round(base * (1 + income_bonus)). */
   income_bonus: number;
+  /** Вероятность удвоить монеты за заказ (0..1). */
   bonus_chance: number;
-  /** Доп. заряды ко всем генераторам (целое). */
-  gen_extra_charges: number;
-  /** К шансу дропа при очистке dirty_1 (сумма долей, напр. 0.1 = +10%). */
-  dirty_drop_chance: number;
-  /** Вероятность не потратить заряд при спавне с генератора (0..1). */
+  /** Вероятность бонусных монет при открытии ящика (0..1). */
+  box_loot_chance: number;
+  /** Вероятность не потратить энергию при спавне с генератора (0..1). */
   free_spawn_chance: number;
-}
-
-export function getGeneratorMaxCharges(purchasedUpgradeIds: string[]): number {
-  let extra = 0;
-  purchasedUpgradeIds.forEach((id) => {
-    const u = UPGRADES.find((x) => x.id === id);
-    if (u?.effectType === "gen_extra_charges") extra += u.effectValue;
-  });
-  return GENERATOR_CHARGE_CAP_BASE + Math.max(0, Math.floor(extra));
 }
 
 export class ProgressionManager {
@@ -45,17 +33,21 @@ export class ProgressionManager {
     let currentLevel = this.state.level;
     let leveledUp = false;
 
+    // Копия: массив из текущего состояния мутировать нельзя — это тот же объект,
+    // что лежит в React-стейте, и по неизменившейся ссылке не сработают useEffect / useMemo.
+    const unlockedZones = [...this.state.unlockedZones];
+
     while (currentXp >= this.getXpToNextLevel(currentLevel)) {
       currentXp -= this.getXpToNextLevel(currentLevel);
       currentLevel++;
       leveledUp = true;
-      
+
       // Проверка открытия новых зон при повышении уровня
-      const levelConfig = LEVELS.find(l => l.level === currentLevel);
+      const levelConfig = LEVELS.find((l) => l.level === currentLevel);
       if (levelConfig && levelConfig.unlocks.length > 0) {
-        levelConfig.unlocks.forEach(zone => {
-          if (!this.state.unlockedZones.includes(zone)) {
-            this.state.unlockedZones.push(zone);
+        levelConfig.unlocks.forEach((zone) => {
+          if (!unlockedZones.includes(zone)) {
+            unlockedZones.push(zone);
           }
         });
       }
@@ -64,7 +56,10 @@ export class ProgressionManager {
     this.state = {
       ...this.state,
       level: currentLevel,
-      xp: currentXp
+      xp: currentXp,
+      // Новая ссылка только когда состав действительно изменился.
+      unlockedZones:
+        unlockedZones.length === this.state.unlockedZones.length ? this.state.unlockedZones : unlockedZones,
     };
 
     return { leveledUp, newState: this.state };
@@ -97,33 +92,25 @@ export class ProgressionManager {
     return { success: true, newState: this.state };
   }
 
-  /** Суммирование effectValue по типам. Дефолты: income_bonus/gen_speed/bonus_chance = 0. */
+  /** Суммирование effectValue по типам. Дефолт для всех — 0 (эффекта нет). */
   public getActiveBonuses(): ActiveBonuses {
     const bonuses: ActiveBonuses = {
       energy_max: 0,
-      gen_speed: 0,
       income_bonus: 0,
       bonus_chance: 0,
-      gen_extra_charges: 0,
-      dirty_drop_chance: 0,
+      box_loot_chance: 0,
       free_spawn_chance: 0,
     };
 
     this.state.purchasedUpgrades.forEach((id) => {
       const upgrade = UPGRADES.find((u) => u.id === id);
-      if (upgrade && upgrade.effectType !== "visual") {
-        if (upgrade.effectType === "energy_max") bonuses.energy_max += upgrade.effectValue;
-        if (upgrade.effectType === "gen_speed") bonuses.gen_speed += upgrade.effectValue;
-        if (upgrade.effectType === "income_bonus") bonuses.income_bonus += upgrade.effectValue;
-        if (upgrade.effectType === "bonus_chance") bonuses.bonus_chance += upgrade.effectValue;
-        if (upgrade.effectType === "gen_extra_charges") bonuses.gen_extra_charges += upgrade.effectValue;
-        if (upgrade.effectType === "dirty_drop_chance") bonuses.dirty_drop_chance += upgrade.effectValue;
-        if (upgrade.effectType === "free_spawn_chance") bonuses.free_spawn_chance += upgrade.effectValue;
-      }
+      if (!upgrade || upgrade.effectType === "visual") return;
+      bonuses[upgrade.effectType] += upgrade.effectValue;
     });
 
     bonuses.free_spawn_chance = Math.min(0.95, bonuses.free_spawn_chance);
-    bonuses.dirty_drop_chance = Math.min(0.95, bonuses.dirty_drop_chance);
+    bonuses.box_loot_chance = Math.min(0.95, bonuses.box_loot_chance);
+    bonuses.bonus_chance = Math.min(0.95, bonuses.bonus_chance);
 
     return bonuses;
   }
@@ -133,27 +120,21 @@ export class ProgressionManager {
   }
 }
 
+/**
+ * Базовая награда за заказ по сложности: узкий разброс (±~18%) вокруг центра тира.
+ * Раньше диапазоны были 10–30 / 30–80 / 80–200 — до 3× разницы между двумя заказами
+ * одной и той же сложности, из-за чего ранняя экономика читалась как чистый рандом.
+ */
+const ORDER_REWARD_TIERS: Record<"simple" | "medium" | "hard", { min: number; max: number; xpDivisor: number }> = {
+  simple: { min: 18, max: 26, xpDivisor: 2 },
+  medium: { min: 45, max: 65, xpDivisor: 1.5 },
+  hard: { min: 105, max: 145, xpDivisor: 1 },
+};
+
 export class EconomyManager {
-  // Доход: простой (10-30), средний (30-80), сложный (80-200)
   public static calculateOrderReward(difficulty: "simple" | "medium" | "hard"): { coins: number; xp: number } {
-    let coins = 0;
-    let xp = 0;
-
-    switch (difficulty) {
-      case "simple":
-        coins = Math.floor(Math.random() * 21) + 10;
-        xp = Math.floor(coins / 2);
-        break;
-      case "medium":
-        coins = Math.floor(Math.random() * 51) + 30;
-        xp = Math.floor(coins / 1.5);
-        break;
-      case "hard":
-        coins = Math.floor(Math.random() * 121) + 80;
-        xp = coins;
-        break;
-    }
-
-    return { coins, xp };
+    const tier = ORDER_REWARD_TIERS[difficulty];
+    const coins = tier.min + Math.floor(Math.random() * (tier.max - tier.min + 1));
+    return { coins, xp: Math.max(1, Math.floor(coins / tier.xpDivisor)) };
   }
 }

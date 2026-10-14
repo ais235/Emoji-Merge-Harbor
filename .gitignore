@@ -5,4 +5,6 @@ coverage/
 .DS_Store
 *.log
 .env*
-!.env.example
+art/debug/
+
+# Исходные спрайт-листы версионируем (art/sheets), отладочные склейки — нет

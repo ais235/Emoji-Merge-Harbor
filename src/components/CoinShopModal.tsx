@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
 import { Coins, X } from "lucide-react";
 import { META_COIN_UPGRADES, UPGRADES } from "../progressionData";
 import type { Upgrade } from "../types";
@@ -13,26 +12,38 @@ const SHOP_UPGRADES: Upgrade[] = META_COIN_UPGRADES.map((id) => UPGRADES.find((u
 );
 
 function effectLabel(u: Upgrade): string {
+  const pct = Math.round(u.effectValue * 100);
   switch (u.effectType) {
     case "energy_max":
       return `+${u.effectValue} к макс. энергии`;
-    case "gen_extra_charges":
-      return `+${u.effectValue} заряд(а) генераторов`;
-    case "dirty_drop_chance":
-      return `+${Math.round(u.effectValue * 100)}% к луту из ящиков`;
+    case "box_loot_chance":
+      return `+${pct}% к шансу находки в ящике`;
     case "free_spawn_chance":
-      return `+${Math.round(u.effectValue * 100)}% бесплатного спавна`;
+      return `+${pct}% бесплатного спавна`;
+    case "income_bonus":
+      return `+${pct}% монет за заказ`;
+    case "bonus_chance":
+      return `+${pct}% к шансу двойных монет`;
     default:
       return u.description;
   }
 }
 
 function groupLabel(u: Upgrade): string {
-  if (u.effectType === "energy_max") return "Энергия";
-  if (u.effectType === "gen_extra_charges") return "Заряды";
-  if (u.effectType === "dirty_drop_chance") return "Лут";
-  if (u.effectType === "free_spawn_chance") return "Бесплатный спавн";
-  return "Бонус";
+  switch (u.effectType) {
+    case "energy_max":
+      return "Энергия";
+    case "box_loot_chance":
+      return "Находки";
+    case "free_spawn_chance":
+      return "Бесплатный спавн";
+    case "income_bonus":
+      return "Доход";
+    case "bonus_chance":
+      return "Чаевые";
+    default:
+      return "Бонус";
+  }
 }
 
 export interface CoinShopModalProps {

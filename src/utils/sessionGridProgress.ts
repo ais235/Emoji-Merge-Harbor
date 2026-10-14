@@ -2,40 +2,8 @@
  * Уровень предметов «уже видел на поле» и вспомогательные константы для сессии (ящики с генератором).
  */
 
-import type { ActiveZone, GridCell, ProgressionState } from "../types";
-import {
-  ALL_ACTIVE_ZONES,
-  ALL_ITEMS,
-  COBWEB_UNKNOWN_ITEM_ID,
-  generatorItemIdForZone,
-  itemIsGenerator,
-  itemIsResourcePickup,
-} from "../types";
-
-/** Порядок разблокировки комнат в хабе — следующие генераторы в ящиках только после текущей зоны. */
-const ZONE_UNLOCK_ORDER: ActiveZone[] = [
-  "hall",
-  "kitchen",
-  "bedroom",
-  "bathroom",
-  "garden",
-  "terrace",
-  "office",
-  "lounge",
-  "secret",
-];
-
-/** Id генераторов следующих комнат (по прогрессии хаба). */
-export function hiddenSessionGeneratorIdsForZone(zone: ActiveZone): string[] {
-  const primary = generatorItemIdForZone(zone);
-  const idx = ZONE_UNLOCK_ORDER.indexOf(zone);
-  if (idx < 0) {
-    return ALL_ACTIVE_ZONES.filter((z) => z !== zone)
-      .map((z) => generatorItemIdForZone(z))
-      .filter((id) => id !== primary);
-  }
-  return ZONE_UNLOCK_ORDER.slice(idx + 1).map((z) => generatorItemIdForZone(z));
-}
+import type { GridCell, ProgressionState } from "../types";
+import { ALL_ITEMS, COBWEB_UNKNOWN_ITEM_ID, itemIsMergeable } from "../types";
 
 /** Максимальный уровень mergeable-предмета на видимых клетках (item / cobweb). */
 export function computeMaxSeenMergeableLevelFromGrid(grid: GridCell[]): number {
@@ -43,9 +11,7 @@ export function computeMaxSeenMergeableLevelFromGrid(grid: GridCell[]): number {
   for (const c of grid) {
     if (c.cellType === "item" && c.item) {
       const d = ALL_ITEMS[c.item];
-      if (d && "level" in d && !itemIsGenerator(d) && !itemIsResourcePickup(d)) {
-        maxL = Math.max(maxL, d.level);
-      }
+      if (d && itemIsMergeable(d)) maxL = Math.max(maxL, d.level);
     }
     if (c.cellType === "cobweb" && c.item && c.item !== COBWEB_UNKNOWN_ITEM_ID) {
       const lvl = c.itemLevel >= 1 ? c.itemLevel : 1;
@@ -61,33 +27,33 @@ export function bumpMaxSeenItemLevelFromGrid(prog: ProgressionState, grid: GridC
   return { ...prog, maxSeenItemLevel: Math.max(prev, fromGrid) };
 }
 
-/** Нижняя граница уровня предмета в заказе по уровню игрока. */
+/**
+ * Окно уровней предметов для заказов.
+ *
+ * Прошлые границы (min 1/2/3, max 2/3/4/5) на уровнях 3–4 и 7–9 схлопывались в **один** уровень:
+ * вместе с ограничением «одна цепочка» пул сводился к 1–2 предметам, и три карточки заказов
+ * либо просили одно и то же, либо их просто не из чего было собрать.
+ * Окно всегда шире одного уровня; сверху его всё равно ограничивает `maxSeenItemLevel + 1`.
+ */
 export function playerTierMinOrderItemLevel(playerLevel: number): number {
-  if (playerLevel < 3) return 1;
-  if (playerLevel < 7) return 2;
+  if (playerLevel < 5) return 1;
+  if (playerLevel < 15) return 2;
   return 3;
 }
 
-/** Верхняя граница уровня предмета в заказе по уровню игрока (таблица дизайна). */
 export function playerTierMaxOrderItemLevel(playerLevel: number): number {
-  if (playerLevel < 5) return 2;
-  if (playerLevel < 10) return 3;
-  if (playerLevel < 15) return 4;
-  return 5;
-}
-
-/** Сколько позиций в заказе по уровню игрока. */
-export function playerTierOrderSlotCount(playerLevel: number): number {
-  if (playerLevel < 10) return 1;
-  if (playerLevel < 15) return 1 + Math.floor(Math.random() * 2);
-  if (playerLevel < 20) return 2;
-  return 2 + Math.floor(Math.random() * 2);
+  if (playerLevel < 3) return 2;
+  if (playerLevel < 6) return 3;
+  if (playerLevel < 10) return 4;
+  if (playerLevel < 15) return 5;
+  return 6;
 }
 
 /** Сколько цепочек из активных на поле участвуют в пуле заказов. */
 export function playerTierOrderChainSliceCount(playerLevel: number, activeChainCount: number): number {
   if (activeChainCount <= 1) return 1;
-  if (playerLevel < 10) return 1;
-  if (playerLevel < 20) return Math.min(2, activeChainCount);
+  if (playerLevel < 5) return 1;
+  if (playerLevel < 10) return Math.min(2, activeChainCount);
+  if (playerLevel < 15) return Math.min(3, activeChainCount);
   return activeChainCount;
 }

@@ -6,7 +6,7 @@
  * Zap / Star / Coins, ds-progress). Слева «Дом», по центру уровень/полоска/заказы, справа монеты и под ними энергия.
  */
 
-import React, { useMemo } from "react";
+import { useMemo } from "react";
 import { Coins, Star, Zap } from "lucide-react";
 
 export interface GameHeaderProps {
@@ -18,9 +18,8 @@ export interface GameHeaderProps {
   playerLevel: number;
   playerXP: number;
   nextLevelXP: number;
-  /** Выполнено заказов миниигры в этой комнате (квота) */
-  ordersCompleted: number;
-  maxOrders: number;
+  /** Всего выполнено заказов (накопительный счётчик прогрессии). */
+  totalOrdersCompleted: number;
   onGoHome: () => void;
 }
 
@@ -39,15 +38,13 @@ export function GameHeader({
   playerLevel,
   playerXP,
   nextLevelXP,
-  ordersCompleted,
-  maxOrders,
+  totalOrdersCompleted,
   onGoHome,
 }: GameHeaderProps) {
   const xpFill =
     nextLevelXP > 0 ? Math.min(100, (playerXP / nextLevelXP) * 100) : 0;
   const showRegen = energy < maxEnergy && msUntilNextEnergy > 0;
-  const ordersLabel =
-    maxOrders > 0 ? `Заказов: ${ordersCompleted}/${maxOrders}` : "Заказов: —";
+  const ordersLabel = `Заказов: ${totalOrdersCompleted}`;
 
   const regenTimer = useMemo(
     () => formatRegenCountdown(msUntilNextEnergy),

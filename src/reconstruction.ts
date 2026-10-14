@@ -30,11 +30,14 @@ export const RECONSTRUCTION_STAGES: ReconstructionStage[] = [
     id: "open_secret_room",
     title: "Открыть тайную комнату",
     description: "Передайте предметы с поля, чтобы завершить отделку.",
+    // Предметы цепочки зала: её генератор стоит на поле с самого старта.
+    // Раньше здесь были f4/s3 (фрукты и сладости) — у этих цепочек генератора нет,
+    // предметы падали только из ящиков, и этап был практически недостижим.
     requirement: {
       type: "items",
       needs: [
-        { itemId: "f4", count: 2 },
-        { itemId: "s3", count: 1 },
+        { itemId: "hl4", count: 2 },
+        { itemId: "hl3", count: 1 },
       ],
     },
     rewardCoins: 450,

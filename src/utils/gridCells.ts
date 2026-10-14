@@ -92,7 +92,7 @@ export function cobwebGridCell(itemId: ItemId, itemLevel: number, chainId: strin
 export function itemGridCell(itemId: ItemId): GridCell {
   const d = ALL_ITEMS[itemId];
   if (!d || itemIsGenerator(d) || itemIsResourcePickup(d)) {
-    return { cellType: "item", item: itemId, itemLevel: 1, chainId: "fruit", ...NO_BOX_LOOT };
+    return { cellType: "item", item: itemId, itemLevel: 1, chainId: "hall_tea", ...NO_BOX_LOOT };
   }
   return {
     cellType: "item",

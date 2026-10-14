@@ -2,13 +2,14 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
+import type React from "react";
 
 /**
  * Сюжетные диалоги на экране «Дом»: тёмная VN-панель с бюстом и outline-кнопками.
  * Контракт без изменений: beat + onChoice(nextBeatId); onDismiss опционально.
  */
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { StoryBeat } from "../story/storyData";
 
 interface NPCStyle {

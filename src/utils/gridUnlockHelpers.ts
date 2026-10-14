@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ALL_ITEMS, ITEM_CHAINS, itemIsGenerator, itemIsResourcePickup, type GridCell, type ItemId } from "../types";
+import { ALL_ITEMS, itemIsGenerator, itemIsResourcePickup, type GridCell, type ItemId } from "../types";
 import {
   boxGridCell,
   cobwebGridCell,
@@ -81,15 +81,8 @@ export function migrateLegacyGridCell(entry: unknown): GridCell {
     const rawItem = o.item;
     const item = rawItem === null ? null : typeof rawItem === "string" ? (rawItem as ItemId) : null;
     const raw = o.cellState;
-    let cellType: GridCell["cellType"] = "empty";
     if (raw === "locked" || raw === "dirty_2" || raw === "blocked" || raw === "dirty_1") {
       return normalizeCellFields(boxGridCell());
-    }
-    if (raw === "normal" || raw === undefined || raw === null) {
-      if (item) {
-        const d = ALL_ITEMS[item];
-        cellType = d && itemIsGenerator(d) ? "generator" : "item";
-      }
     }
     if (!item) return normalizeCellFields(emptyGridCell());
     const d = ALL_ITEMS[item];
